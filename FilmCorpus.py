@@ -17,6 +17,7 @@ class FilmCorpus(object):
 
         dialogs = {}
         utt_cnt = 0
+        word_cnt = 0
         for f_idx, file in enumerate(film_files):
             if f_idx % 500 == 0:
                 print("Finished Processing files up to %d" % f_idx)
@@ -32,11 +33,13 @@ class FilmCorpus(object):
                             speaker = line
                         elif speaker is not None:
                             lines.append((speaker, line))
+                            word_cnt += len(line.split())
                 utt_cnt += len(lines)
                 dialogs[file] = lines
         self.utt_cnt = utt_cnt
+        self.word_cnt = word_cnt
         self.dialogs = dialogs
-        print("Done parsing all films with %d utts" % self.utt_cnt)
+        print("Done parsing all films with %d utts %d words" % (self.utt_cnt, self.word_cnt))
 
     def pprint_dialog(self, idx):
         lines = self.dialogs.values()[idx]
