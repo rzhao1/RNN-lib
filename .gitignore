@@ -92,3 +92,5 @@ ENV/
 
 # corpus
 Data/
+clean_data.txt
+.idea/
