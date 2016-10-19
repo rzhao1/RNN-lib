@@ -41,6 +41,7 @@ class FilmCorpus(object):
                                     speaker = None
                                 else:
                                     speaker = re.sub("[^a-zA-Z0-9 ]+", "", speaker)
+                                    speaker = re.sub('\s+', ' ', speaker)
                             elif speaker is not None:
                                 lines.append((speaker, line))
                     dialogs[file] = self._postprocess_lines(lines)
