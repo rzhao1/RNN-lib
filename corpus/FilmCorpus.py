@@ -3,6 +3,7 @@ import fnmatch
 import re
 import numpy as np
 import nltk
+from collections import OrderedDict
 
 
 class FilmCorpus(object):
@@ -22,13 +23,19 @@ class FilmCorpus(object):
             for root, _, file_names in os.walk(self._path):
                 for filename in fnmatch.filter(file_names, '*.txt'):
                     film_files.append(os.path.join(root, filename))
-            print("Loaded %d films" % len(film_files))
+            print("Loaded %d files" % len(film_files))
 
-            dialogs = {}
+            dialogs = OrderedDict()
             for f_idx, file in enumerate(film_files):
                 if f_idx % 500 == 0:
                     print("Finished Processing files up to %d" % f_idx)
                 with open(file, 'rb') as f:
+                    file_key = os.path.basename(file)
+
+                    # skip the film that is already processed before
+                    if file_key in dialogs.keys():
+                        continue
+
                     raw_lines = f.readlines()
                     speaker = None
                     lines = []
@@ -45,12 +52,23 @@ class FilmCorpus(object):
                                     speaker = re.sub('\s+', ' ', speaker)
                             elif speaker is not None:
                                 lines.append((speaker, re.sub('\s+', ' ', line)))
-                    dialogs[file] = self._postprocess_lines(lines)
+                    if len(lines) > 0:
+                        dialogs[file_key] = self._postprocess_lines(lines)
             self.dialogs = dialogs
             self.dump_dialogs()
 
         self.utt_cnt = np.sum([len(d) for d in self.dialogs.values()])
-        print("Done parsing all films with %d utts" % (self.utt_cnt))
+        print("Done parsing %d films with %d utts" % (len(self.dialogs.keys()), int(self.utt_cnt)))
+
+    def remove_dupliate(self):
+        temp = OrderedDict()
+        for film_key, dialogs in self.dialogs.iteritems():
+            new_film_key = os.path.basename(film_key)
+            if new_film_key not in temp.keys() and len(dialogs) > 0:
+                temp[new_film_key] = dialogs
+        self.dialogs = temp
+        self.utt_cnt = np.sum([len(d) for d in self.dialogs.values()])
+        print("Done parsing %d films with %d utts" % (len(self.dialogs.keys()), int(self.utt_cnt)))
 
     def get_protagonists(self):
         def collect_character_info(dialog):
@@ -60,6 +78,7 @@ class FilmCorpus(object):
                 char_word_cnt[char] = cnt + len(line.split())
             temp = [(cnt, char) for char, cnt in char_word_cnt.iteritems()]
             return sorted(temp, reverse=True)
+
         protagonist_dict = {}
         for file, d in self.dialogs.iteritems():
             char_cnt = collect_character_info(d)
@@ -104,23 +123,28 @@ class FilmCorpus(object):
 
     def load_dialogs(self):
         if os.path.exists(self.dump_path):
-            dialogs = {}
+            dialogs = OrderedDict()
             with open(self.dump_path, "rb") as f:
                 all_lines = f.readlines()
                 file_name = None
                 lines = None
+
                 for l in all_lines:
                     l = l.strip()
                     if "FILE_NAME" in l:
-                        file_name = l.replace("FILE_NAME: ", "")
-                        if lines is not None and len(lines) > 0:
+                        if lines is not None:
                             dialogs[file_name] = lines
+
+                        file_name = l.replace("FILE_NAME: ", "")
                         lines = []
 
                     elif file_name is not None:
                         tokens = l.split("|||")
                         speaker, line = tokens
                         lines.append((speaker, line))
+                # save the last dialog
+                if lines is not None and len(lines) > 0:
+                    dialogs[file_name] = lines
             return dialogs
         else:
             return None

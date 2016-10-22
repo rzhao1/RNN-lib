@@ -92,6 +92,6 @@ ENV/
 
 # corpus
 Data/
-corpus/clean_data.txt
 .idea/
 scirpts/*.json
+*.txt
