@@ -13,6 +13,7 @@ class FilmCorpus(object):
         :param corpus_path: the folder that contains the data
         """
         self._path = corpus_path
+        self.dump_path = os.path.join(self._path, self.dump_name)
 
         self.dialogs = self.load_dialogs()
 
@@ -43,13 +44,30 @@ class FilmCorpus(object):
                                     speaker = re.sub("[^a-zA-Z0-9 ]+", "", speaker)
                                     speaker = re.sub('\s+', ' ', speaker)
                             elif speaker is not None:
-                                lines.append((speaker, line))
+                                lines.append((speaker, re.sub('\s+', ' ', line)))
                     dialogs[file] = self._postprocess_lines(lines)
             self.dialogs = dialogs
             self.dump_dialogs()
 
         self.utt_cnt = np.sum([len(d) for d in self.dialogs.values()])
         print("Done parsing all films with %d utts" % (self.utt_cnt))
+
+    def get_protagonists(self):
+        def collect_character_info(dialog):
+            char_word_cnt = {}
+            for char, line in dialog:
+                cnt = char_word_cnt.get(char, 0)
+                char_word_cnt[char] = cnt + len(line.split())
+            temp = [(cnt, char) for char, cnt in char_word_cnt.iteritems()]
+            return sorted(temp, reverse=True)
+        protagonist_dict = {}
+        for file, d in self.dialogs.iteritems():
+            char_cnt = collect_character_info(d)
+            major = char_cnt[0]
+            background = (np.sum([cnt for cnt, char in char_cnt[1:]]), "background")
+            protagonist_dict[file] = (major, background)
+
+        return protagonist_dict
 
     def _postprocess_lines(self, lines):
         merge_lines = []
@@ -77,7 +95,7 @@ class FilmCorpus(object):
             print("%s: %s" % l)
 
     def dump_dialogs(self):
-        dest_f = open(self.dump_name, "wb")
+        dest_f = open(self.dump_path, "wb")
         for file_name, lines in self.dialogs.iteritems():
             dest_f.write("FILE_NAME: %s\n" % file_name)
             for speaker, line in lines:
@@ -85,9 +103,9 @@ class FilmCorpus(object):
         dest_f.close()
 
     def load_dialogs(self):
-        if os.path.exists(self.dump_name):
+        if os.path.exists(self.dump_path):
             dialogs = {}
-            with open(self.dump_name, "rb") as f:
+            with open(self.dump_path, "rb") as f:
                 all_lines = f.readlines()
                 file_name = None
                 lines = None
@@ -106,5 +124,3 @@ class FilmCorpus(object):
             return dialogs
         else:
             return None
-
-a = FilmCorpus('Data')
