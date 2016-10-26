@@ -1,6 +1,7 @@
 import os
 
 from nltk import WordPunctTokenizer
+import matplotlib.pyplot as plt
 
 
 class data_splitter(object):
@@ -51,6 +52,9 @@ class data_splitter(object):
         valid_size=total_size*split_size[1]/10
         test_size=total_size*split_size[2]/10
 
+        train_char=[]
+        test_char=[]
+        valid_char=[]
         #Pointer for decoder input
         ptr=0
         while  ptr+1<total_size:
@@ -61,7 +65,7 @@ class data_splitter(object):
                 if(speaker[ptr]=="$$$"):
                     ptr +=1
                     for i in range(0,line_thres):
-                        Content_x+= utterance[i+ptr]
+                        Content_x+= ' '+utterance[i+ptr]
                     ptr += line_thres
                     encoder_speaker=speaker[ptr-1]
                     decoder_speaker=speaker[ptr]
@@ -74,23 +78,26 @@ class data_splitter(object):
                         train_y.write("$$$\n")
                         train_x.write(Content_x+'\n')
                         train_y.write(Content_y+'\n')
+                        train_char.append(len(Content_x.split(' ')))
 
                     elif ptr>train_size and ptr<train_size+valid_size:
                         valid_x.write("$$$\n")
                         valid_y.write("$$$\n")
                         valid_x.write(Content_x+'\n')
                         valid_y.write(Content_y+'\n')
+                        valid_char.append(len(Content_x.split(' ')))
                     else :
                         test_x.write("$$$\n")
                         test_y.write("$$$\n")
                         test_x.write(Content_x+'\n')
                         test_y.write(Content_y+'\n')
+                        test_char.append(len(Content_x.split(' ')))
 
 
                 else:
                      start=ptr-line_thres+1
                      for i in range(0, line_thres ):
-                         Content_x += utterance[i + start]
+                         Content_x += ' '+utterance[i + start]
                      ptr += 1
                      encoder_speaker = speaker[ptr - 1]
                      decoder_speaker = speaker[ptr]
@@ -101,14 +108,20 @@ class data_splitter(object):
                      if (ptr <= train_size):
                          train_x.write(Content_x + '\n')
                          train_y.write(Content_y + '\n')
+                         train_char.append(len(Content_x.split(' ')))
 
                      elif ptr > train_size and ptr < train_size + valid_size:
                          valid_x.write(Content_x + '\n')
                          valid_y.write(Content_y + '\n')
+                         valid_char.append(len(Content_x.split(' ')))
                      else:
                          test_x.write(Content_x + '\n')
                          test_y.write(Content_y + '\n')
+                         test_char.append(len(Content_x.split(' ')))
 
+        print ('Average size of characters in training encoder sentence ' + str(sum(train_char)/train_size))
+        print ('Average size of characters in validation encoder sentence ' + str(sum(train_char) / valid_size))
+        print ('Average size of characters in testing encoder sentence ' + str(sum(train_char) / (total_size-train_size-valid_size)))
 
 
 def main ():
