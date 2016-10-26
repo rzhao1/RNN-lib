@@ -149,11 +149,9 @@ class data_splitter(object):
 
 
 def main ():
-    #data_dir='/home/ranzhao1/PycharmProjects/DeepLearningProject/data/'
-    #ata_name='filmdata.txt'
+    data_dir='/home/ranzhao1/PycharmProjects/DeepLearningProject/data/'
+    data_name='filmdata.txt'
 
-    data_dir = "/home/tonyzhao/Dropbox/deep_learning_class/UCSC_clean/"
-    data_name = "NER_AnnotatedData.txt"
     line_thres=2
     split_size=[7,1,2]
     m=data_splitter(data_dir,data_name,line_thres,split_size)
