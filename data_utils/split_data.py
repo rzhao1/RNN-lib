@@ -1,6 +1,7 @@
 import os
 
 from nltk import WordPunctTokenizer
+import numpy as np
 import matplotlib.pyplot as plt
 
 
@@ -23,13 +24,14 @@ class data_splitter(object):
             self._parse_file(f.readlines(),line_thres,split_size)
 
 
-    def _parse_file(self, lines,line_thres,split_size):
+    def _parse_file(self, lines, line_thres, split_size):
         """
         :param lines: Each line is a line from the file
         """
 
-        utterance=[]
-        speaker=[]
+        utterances = []
+        speakers = []
+        movies = {}
 
         train_x=open('train_x.txt','w')
         train_y=open('train_y.txt','w')
@@ -38,17 +40,29 @@ class data_splitter(object):
         test_x=open('test_x.txt','w')
         test_y=open('test_y.txt','w')
 
-        for idx, line in enumerate(lines):
-            if 'FILE_NAME' in line:
-                speaker.append("$$$")
-                utterance.append("$$$")
+        current_movie = []
+        current_name = []
+        for line in lines:
+            if "FILE_NAME" in line:
+                if current_movie:
+                    movies[current_name] = current_movie
+                current_name = line.strip()
+                current_movie = []
             else:
-                line = line.strip()
-                speaker_utterance = line.split("|||")
-                utterance.append(speaker_utterance[1])
-                speaker.append(speaker_utterance[0])
+                current_movie.append(line.strip())
+        if current_movie:
+            movies[current_name] = current_movie
 
-        total_size=len(utterance)
+        # shuffle movie here.
+        shuffle_keys = movies.keys()
+        np.random.shuffle(shuffle_keys)
+        for key in shuffle_keys:
+            speakers.append("$$$")
+            utterances.append("$$$")
+            speakers.extend([l.split("|||")[0] for l in movies[key]])
+            utterances.extend([l.split("|||")[1] for l in movies[key]])
+
+        total_size=len(utterances)
         train_size=total_size*split_size[0]/10
         valid_size=total_size*split_size[1]/10
         test_size=total_size*split_size[2]/10
@@ -57,25 +71,26 @@ class data_splitter(object):
         test_char=[]
         valid_char=[]
 
-        #Pointer for decoder input
+        # Pointer for decoder input
         ptr=0
+        print("Begin creating data")
         while ptr+1<total_size:
             content_x = ""
             content_y = ""
             encoder_speaker = ""
             decoder_speaker = ""
 
-            if (speaker[ptr]=="$$$"):
+            if (speakers[ptr]=="$$$"):
                 ptr +=1
                 for i in range(0,line_thres):
-                    content_x += ' '+utterance[i+ptr]
+                    content_x += ' '+utterances[i+ptr]
                 ptr += line_thres
-                encoder_speaker=speaker[ptr-1]
-                decoder_speaker=speaker[ptr]
+                encoder_speaker=speakers[ptr-1]
+                decoder_speaker=speakers[ptr]
                 if encoder_speaker == decoder_speaker:
                     content_x += ' #'
 
-                content_y=utterance[ptr]
+                content_y=utterances[ptr]
 
                 if(ptr<=train_size):
                     train_x.write("$$$\n")
@@ -100,14 +115,14 @@ class data_splitter(object):
             else:
                 start = ptr-line_thres+1
                 for i in range(0, line_thres):
-                    content_x += ' '+utterance[i + start]
+                    content_x += ' '+utterances[i + start]
 
                 ptr += 1
-                encoder_speaker = speaker[ptr - 1]
-                decoder_speaker = speaker[ptr]
+                encoder_speaker = speakers[ptr - 1]
+                decoder_speaker = speakers[ptr]
                 if encoder_speaker == decoder_speaker:
                     content_x+=' #'
-                content_y = utterance[ptr]
+                content_y = utterances[ptr]
 
                 if ptr <= train_size:
                     train_x.write(content_x + '\n')
@@ -123,14 +138,22 @@ class data_splitter(object):
                     test_y.write(content_y + '\n')
                     test_char.append(len(content_x.split(' ')))
 
-        print ('Average size of characters in training encoder sentence ' + str(sum(train_char)/train_size))
-        print ('Average size of characters in validation encoder sentence ' + str(sum(train_char) / valid_size))
-        print ('Average size of characters in testing encoder sentence ' + str(sum(train_char) / (total_size-train_size-valid_size)))
+        train_x.close()
+        train_y.close()
+        valid_x.close()
+        valid_y.close()
+        test_y.close()
+        print ('Average size of characters in training encoder sentence %.2f' % float(np.mean(train_char)))
+        print ('Average size of characters in validation encoder sentence %.2f' % float(np.mean(valid_char)))
+        print ('Average size of characters in testing encoder sentence %.2f'  % float(np.mean(test_char)))
 
 
 def main ():
-    data_dir='/home/ranzhao1/PycharmProjects/DeepLearningProject/data/'
-    data_name='filmdata.txt'
+    #data_dir='/home/ranzhao1/PycharmProjects/DeepLearningProject/data/'
+    #ata_name='filmdata.txt'
+
+    data_dir = "/home/tonyzhao/Dropbox/deep_learning_class/UCSC_clean/"
+    data_name = "NER_AnnotatedData.txt"
     line_thres=2
     split_size=[7,1,2]
     m=data_splitter(data_dir,data_name,line_thres,split_size)
