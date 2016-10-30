@@ -41,9 +41,9 @@ def main():
 
 
     # convert to numeric input outputs that fits into TF models
-    train_feed = WordSeqDataFeed("Train", corpus_data["train"])
-    valid_feed = WordSeqDataFeed("Valid", corpus_data["valid"])
-    test_feed = WordSeqDataFeed("Test", corpus_data["test"])
+    train_feed = WordSeqDataFeed("Train", corpus_data["train"], api.vocab)
+    valid_feed = WordSeqDataFeed("Valid", corpus_data["valid"], api.vocab)
+    test_feed = WordSeqDataFeed("Test", corpus_data["test"], api.vocab)
 
     if FLAGS.forward_only:
         log_dir = os.path.join(FLAGS.work_dir, FLAGS.test_path)

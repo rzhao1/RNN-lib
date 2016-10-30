@@ -150,21 +150,6 @@ class WordSeqCorpus(object):
                 "valid": (self.valid_x, self.valid_y),
                 "test": (self.test_x, self.test_y)}
 
-def main ():
-    data_dir='../Data/'
-    data_name='clean_data.txt'
-
-    line_thres=2
-    split_size=[7,1,2]
-    WordSeqCorpus(data_dir, data_name, line_thres, split_size)
-
-if __name__ == '__main__':
-    main()
-
-
-
-
-
 
 
 
