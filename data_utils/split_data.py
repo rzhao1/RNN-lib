@@ -29,9 +29,23 @@ class WordSeqCorpus(object):
             with open(os.path.join(data_dir, data_name), "rb") as f:
                 self._parse_file(f.readlines(), split_size)
 
+        # get vocabulary\
+        self.vocab = self.get_vocab()
+
         self.print_stats("train", self.train_x)
         self.print_stats("valid", self.valid_x)
         self.print_stats("test", self.test_x)
+
+    def get_vocab(self):
+        # get vocabulary dictionary
+        vocab_cnt = {}
+        for line in self.train_x:
+            for tkn in line.split():
+                cnt = vocab_cnt.get(tkn, 0)
+                vocab_cnt[tkn] = cnt + 1
+        vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
+        vocab_cnt = sorted(vocab_cnt, reverse=True)
+        return [key for cnt, key in vocab_cnt]
 
     def print_stats(self, name, data):
         avg_len = float(np.mean([len(x.split()) for x in data]))
@@ -41,7 +55,6 @@ class WordSeqCorpus(object):
         """
         :param lines: Each line is a line from the file
         """
-
         utterances = []
         speakers = []
         movies = {}

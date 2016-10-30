@@ -37,11 +37,13 @@ class Config(object):
 def main():
     # load corpus
     api = WordSeqCorpus(FLAGS.data_dir, "clean_data.txt", FLAGS.line_thres, [7,1,2])
+    corpus_data = api.get_corpus()
+
 
     # convert to numeric input outputs that fits into TF models
-    train_feed = WordSeqDataFeed("Train", config.min_train_len, config.max_train_len, FLAGS.vocab_size)
-    easy_test_feed = WordSeqDataFeed("Valid", config.min_train_len, config.max_train_len, FLAGS.vocab_size)
-    hard_test_feed = WordSeqDataFeed("Test", config.max_train_len, config.max_test_len, FLAGS.vocab_size)
+    train_feed = WordSeqDataFeed("Train", corpus_data["train"])
+    valid_feed = WordSeqDataFeed("Valid", corpus_data["valid"])
+    test_feed = WordSeqDataFeed("Test", corpus_data["test"])
 
     if FLAGS.forward_only:
         log_dir = os.path.join(FLAGS.work_dir, FLAGS.test_path)
@@ -74,6 +76,7 @@ def main():
             checkpoint_path = os.path.join(ckp_dir, "seq-ptb-lm.ckpt")
 
             for epoch in range(config.max_epoch):
+                pass
                 # TODO training here
         else:
             # begin evaluation
