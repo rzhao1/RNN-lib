@@ -12,5 +12,6 @@ python utt_pretrain
 python word2seq.py
 
 ## Part 3: Discourse-level seq2seq model
+python utt2seq.py
 
 
