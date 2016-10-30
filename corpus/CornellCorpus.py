@@ -8,7 +8,6 @@ class CornellCorpus(object):
     delimiter = "+++$+++"
     dump_name = "cornell_data.txt"
 
-
     def __init__(self, data_dir):
         self.dump_path = os.path.join(data_dir, self.dump_name)
 
