@@ -10,7 +10,7 @@ class WordSeqCorpus(object):
     valid_y = None
     test_x = None
     test_y = None
-    
+
     def __init__(self, data_dir, data_name, line_thres, split_size):
         """"
         :param line_thres: how many line will be merged as encoding sentensce
