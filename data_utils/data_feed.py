@@ -81,7 +81,7 @@ class WordSeqDataFeed(object):
             return None
 
 
-# used by utt pretrain
+# used by utt pre-train
 class UttDataFeed(object):
     # iteration related
     """
@@ -95,50 +95,64 @@ class UttDataFeed(object):
     batch_indexes = None
     PAD_ID = 0
     UNK_ID = 1
-    GO_ID = 2
-    EOS_ID = 3
+
+    # feature names
+    SPK_ID = 0
+    TEXT_ID = 1
+    DA_ID = 2
+    SENTI_ID = 3
+    OPINION_ID = 4
+    EMPATH_ID = 5
+    LIWC_ID = 6
+
+    # dialog act labels
+    dialog_acts = ["inform", "question", "other", "goodbye", "disconfirm",
+                   "confirm", "non-verbal", "non-understand", "request"]
 
     def __init__(self, name, data, vocab):
         self.name = name
-        # plus 4 is because of the 4 built-in words PAD, UNK, GO and EOS
-        self.vocab = {word: idx + 4 for idx, word in enumerate(vocab)}
-        data_x, data_y = data
+        # plus 4 is because of the 2 built-in words PAD, UNK
+        self.vocab = {word: idx + 2 for idx, word in enumerate(vocab)}
 
         # convert data into ids
-        self.id_xs, self.id_ys = [], []
-        for line in data_x:
-            self.id_xs.append(self.line_2_ids(line))
-        for line in data_y:
-            self.id_ys.append(self.line_2_ids(line))
+        self.id_text = []
+        self.labels = []
+        for idx, line in enumerate(data):
+            if line == "$$$":
+                continue
+            self.id_text.append(self.line_2_ids(line))
+            self.labels.append(self.line_2_label(None if idx == 0 else data[idx-1],
+                                                 line,
+                                                 None if idx < len(data) else data[idx+1]))
 
-        all_lens = [len(line) for line in self.id_xs]
-        self.indexes = list(np.argsort(all_lens))
-        self.data_size = len(self.id_xs)
-        print("%s feed loads %d samples" % self.data_size)
+        self.indexes = list(np.argsort([len(line) for line in self.id_text]))
+        self.data_size = len(self.id_text)
+        print("%s feed loads %d samples" % (name, self.data_size))
 
     def line_2_ids(self, line):
-        return [self.vocab.get(word, self.UNK_ID) for word in line.split()]
+        return [self.vocab.get(word, self.UNK_ID) for word in line[self.TEXT_ID].split()]
+
+    def line_2_label(self, prev_line, line, next_line):
+        # current line
+        return self.dialog_acts.index(line[self.DA_ID])
 
     def _shuffle(self):
         np.random.shuffle(self.batch_indexes)
 
     def _prepare_batch(self, selected_index):
-        x_rows = [self.id_xs[idx] for idx in selected_index]
-        y_rows = [self.id_ys[idx] for idx in selected_index]
+        x_rows = [self.id_text[idx] for idx in selected_index]
+        y_rows = [self.labels[idx] for idx in selected_index]
         encoder_len = np.array([len(row) for row in x_rows], dtype=np.int32)
-        decoder_len = np.array([len(row) for row in y_rows], dtype=np.int32)
-
         max_enc_len = np.max(encoder_len)
-        max_dec_len = np.max(decoder_len)
 
         encoder_x = np.zeros((self.batch_size, max_enc_len), dtype=np.int32)
-        decoder_y = np.zeros((self.batch_size, max_dec_len), dtype=np.int32)
+        decoder_y = np.zeros((self.batch_size), dtype=np.int32)
 
         for idx, (x, y) in enumerate(zip(x_rows, y_rows)):
             encoder_x[idx, 0:encoder_len[idx]] = x
-            decoder_y[idx, 0:decoder_len[idx]] = y
+            decoder_y[idx] = y
 
-        return encoder_len, decoder_len, encoder_x, decoder_y
+        return encoder_x, encoder_len, decoder_y
 
     def epoch_init(self, batch_size, shuffle=True):
         # create batch indexes for computation efficiency
