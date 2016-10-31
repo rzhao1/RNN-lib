@@ -1,6 +1,6 @@
 import os
-from nltk import WordPunctTokenizer
 import numpy as np
+import json
 
 
 class WordSeqCorpus(object):
@@ -105,7 +105,7 @@ class WordSeqCorpus(object):
         self.train_y = train_y = content_ys[0: train_size]
         self.valid_x = valid_x = content_xs[train_size: train_size+valid_size]
         self.valid_y = valid_y = content_ys[train_size: train_size+valid_size]
-        self.text_x = test_x = content_xs[train_size+valid_size:]
+        self.test_x = test_x = content_xs[train_size+valid_size:]
         self.test_y = test_y = content_ys[train_size+valid_size:]
 
         # begin dumpping data to file
@@ -149,6 +149,132 @@ class WordSeqCorpus(object):
         return {"train": (self.train_x, self.train_y),
                 "valid": (self.valid_x, self.valid_y),
                 "test": (self.test_x, self.test_y)}
+
+
+class UttCorpus(object):
+    # feature names
+    SPK_ID = 0
+    TEXT_ID = 1
+    DA_ID = 2
+    SENTI_ID = 3
+    OPINION_ID = 4
+    EMPATH_ID = 5
+    LIWC_ID = 6
+
+    train_data = None
+    valid_data = None
+    test_data = None
+
+    def __init__(self, data_dir, data_name, split_size):
+        """"
+        Each utt is a tuple, with various features
+        :param split_size: size of training:valid:test
+
+        """
+        self._data_dir = data_dir
+        self._data_name = data_name
+        self.split_size = split_size
+
+        # try to load from existing file
+        if not self.load_data():
+            with open(os.path.join(data_dir, data_name), "rb") as f:
+                self._parse_file(f.readlines(), split_size)
+
+        # get vocabulary
+        self.vocab = self.get_vocab()
+
+        self.print_stats("train", self.train_data)
+        self.print_stats("valid", self.valid_data)
+        self.print_stats("test", self.test_data)
+
+    def get_vocab(self):
+        # get vocabulary dictionary
+        vocab_cnt = {}
+        for line in self.train_data:
+            for tkn in line[self.TEXT_ID].split():
+                cnt = vocab_cnt.get(tkn, 0)
+                vocab_cnt[tkn] = cnt + 1
+        vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
+        vocab_cnt = sorted(vocab_cnt, reverse=True)
+        return [key for cnt, key in vocab_cnt]
+
+    def print_stats(self, name, data):
+        avg_len = float(np.mean([len(x[self.TEXT_ID].split()) for x in data]))
+        print ('%s avg sent len %.2f of %d lines' % (name, avg_len, len(data)))
+
+    def _parse_file(self, lines, split_size):
+        """
+        :param lines: Each line is a line from the file
+        """
+        movies = {}
+        utt_features = []
+
+        current_movie = []
+        current_name = []
+        for line in lines:
+            if "FILE_NAME" in line:
+                if current_movie:
+                    movies[current_name] = current_movie
+                current_name = line.strip()
+                current_movie = []
+            else:
+                current_movie.append(line.strip())
+        if current_movie:
+            movies[current_name] = current_movie
+
+        # shuffle movie here.
+        shuffle_keys = movies.keys()
+        np.random.shuffle(shuffle_keys)
+        for key in shuffle_keys:
+            utt_features.append("$$$")
+            # we only add the line that have full 7 features
+            utt_features.extend([l.split("|||") for l in movies[key] if len(l.split("|||")) == 7])
+
+        total_size = len(utt_features)
+        train_size = int(total_size * split_size[0] / 10)
+        valid_size = int(total_size * split_size[1] / 10)
+
+        # split the data
+        self.train_data = utt_features[0: train_size]
+        self.valid_data = utt_features[train_size: train_size + valid_size]
+        self.test_data = utt_features[train_size + valid_size:]
+
+        # begin dumpping data to file
+        self.dump_data(os.path.join(self._data_dir, "train_data.txt"), self.train_data)
+        self.dump_data(os.path.join(self._data_dir, "valid_data.txt"), self.valid_data)
+        self.dump_data(os.path.join(self._data_dir, "test_data.txt"), self.test_data)
+
+    def dump_data(self, file_name, lines):
+        if os.path.exists(file_name):
+            raise ValueError("File already exists. Abort dumping")
+        print("Dumping to %s with %d lines" % (file_name, len(lines)))
+        with open(file_name, "wb") as f:
+            for line in lines:
+                f.write(json.dumps(line) + "\n")
+
+    def load_data(self):
+        if not os.path.exists(os.path.join(self._data_dir, "train_data.txt")):
+            return False
+
+        def load_file(file_name):
+            with open(file_name, "rb") as f:
+                lines = f.readlines()
+                lines = [json.loads(l.strip()) for l in lines]
+            return lines
+
+        print("Loaded from cache")
+        self.train_data = load_file(os.path.join(self._data_dir, "train_data.txt"))
+        self.valid_data = load_file(os.path.join(self._data_dir, "valid_data.txt"))
+        self.test_data = load_file(os.path.join(self._data_dir, "test_data.txt"))
+        return True
+
+    def get_corpus(self):
+        """
+        :return: the corpus in train/valid/test
+        """
+        return {"train": self.train_data,
+                "valid": self.valid_data,
+                "test": self.test_data}
 
 
 
