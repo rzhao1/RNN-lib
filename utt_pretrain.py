@@ -11,7 +11,7 @@ from models.SeqClassifier import MultiTaskSeqClassifier
 tf.app.flags.DEFINE_string("data_dir", "Data/ucsc_features", "the dir that has the raw corpus file")
 tf.app.flags.DEFINE_string("work_dir", "seq_working", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
-tf.app.flags.DEFINE_string("max_vocab_size", 100000, "The top N vocabulary we use.")
+tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_bool("save_model", False, "Create checkpoints")
 FLAGS = tf.app.flags.FLAGS
 

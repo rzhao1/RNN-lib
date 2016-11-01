@@ -16,6 +16,7 @@ class MultiTaskSeqClassifier(object):
     def __init__(self, sess, config, data_feed, log_dir):
 
         vocab_size = len(data_feed.vocab)
+        self.data_feed = data_feed
 
         with tf.name_scope("io"):
             self.inputs = tf.placeholder(dtype=tf.int32, shape=(None, None), name="input_seq")
@@ -118,13 +119,17 @@ class MultiTaskSeqClassifier(object):
             outputs = tf.matmul(prev_inputs, w) + b
             return outputs
 
-    @staticmethod
-    def metric(name, predictions, ground_truth, verbose=True):
+    def metric(self, name, predictions, ground_truth, verbose=True):
         # compute various metrics and print them
-        acc = float(np.average(predictions == ground_truth))
+        da_acc = float(np.mean(predictions[self.data_feed.DA_ID] == ground_truth[self.data_feed.DA_ID]))
+        senti_acc = float(np.mean(np.argmax(predictions[self.data_feed.SENTI_ID], axis=1)
+                                  == np.argmax(ground_truth[self.data_feed.SENTI_ID], axis=1)))
+
         if verbose:
-            print("%s accuracy is %.3f" % (name, acc))
-        return acc
+            print("%s dialog act accuracy is %.3f" % (name, da_acc))
+            print("%s sentiment accuracy is %.3f" % (name, senti_acc))
+
+        return {self.data_feed.DA_ID: da_acc, self.data_feed.SENTI_ID: senti_acc}
 
     @staticmethod
     def _update_dict(prev_dict, new_input, key):
