@@ -166,7 +166,7 @@ class UttDataFeed(object):
         label_y = dict()
         # add dialog act
         label_y[self.DA_ID] = np.zeros(self.batch_size, dtype=np.int32)
-        label_y[self.SENTI_ID] = np.zeros((self.batch_size, 4), dtype=np.float32)
+        label_y[self.SENTI_ID] = np.zeros((self.batch_size, self.feature_size[self.SENTI_ID]), dtype=np.float32)
 
         for idx, (x, y) in enumerate(zip(x_rows, y_rows)):
             encoder_x[idx, 0:encoder_len[idx]] = x
