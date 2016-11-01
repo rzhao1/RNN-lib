@@ -132,6 +132,7 @@ class UttDataFeed(object):
                                                  line,
                                                  None if idx < len(data) else data[idx+1]))
 
+        # sort the lines in terms of length for computation efficiency
         self.indexes = list(np.argsort([len(line) for line in self.id_text]))
         self.data_size = len(self.id_text)
         print("%s feed loads %d samples" % (name, self.data_size))
@@ -153,13 +154,12 @@ class UttDataFeed(object):
         max_enc_len = np.max(encoder_len)
 
         encoder_x = np.zeros((self.batch_size, max_enc_len), dtype=np.int32)
-        decoder_y = np.zeros((self.batch_size), dtype=np.int32)
+        label_y = np.array(y_rows, dtype=np.int32)
 
-        for idx, (x, y) in enumerate(zip(x_rows, y_rows)):
+        for idx, x in enumerate(x_rows):
             encoder_x[idx, 0:encoder_len[idx]] = x
-            decoder_y[idx] = y
 
-        return encoder_x, encoder_len, decoder_y
+        return encoder_x, encoder_len, label_y
 
     def epoch_init(self, batch_size, shuffle=True):
         # create batch indexes for computation efficiency

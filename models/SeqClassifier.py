@@ -10,7 +10,7 @@ import numpy as np
 from tensorflow.python.ops.nn import rnn_cell
 
 
-class MultiSeqClassifier(object):
+class MultiTaskSeqClassifier(object):
     """
     This models treat LM as a policy problem, where you make one step prediciton given the sent state
     """
@@ -72,10 +72,10 @@ class MultiSeqClassifier(object):
         # optimization
         if config.op == "adam":
             print("Use Adam")
-            optimizer = tf.train.AdamOptimizer(0.001)
+            optimizer = tf.train.AdamOptimizer(self.learning_rate)
         elif config.op == "rmsprop":
             print("Use RMSProp")
-            optimizer = tf.train.RMSPropOptimizer(0.005)
+            optimizer = tf.train.RMSPropOptimizer(self.learning_rate)
         else:
             print("Use SGD")
             optimizer = tf.train.GradientDescentOptimizer(self.learning_rate)
@@ -89,37 +89,85 @@ class MultiSeqClassifier(object):
             print("Save summary to %s" % log_dir)
             self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
 
+    @staticmethod
+    def metric(name, predictions, ground_truth, verbose=True):
+        # compute various metrics and print them
+        acc = float(np.average(np.array(predictions) == np.array(ground_truth)))
+        if verbose:
+            print("%s accuracy is %.3f" % (name, acc))
+        return acc
+
     def train(self, global_t, sess, train_feed):
+        """
+        Run forward and backward path to train the model
+        :param global_t: the global update step
+        :param sess: tf session
+        :param train_feed: data feed
+        :return: average loss
+        """
+
         losses = []
+        predictions = []
+        ground_truth = []
         local_t = 0
         total_word_num = 0
+
         while True:
             batch = train_feed.next_batch()
             if batch is None:
                 break
             inputs, input_lens, outputs = batch
-            total_word_num += np.sum(input_lens)
             feed_dict = {self.inputs: inputs, self.input_lens: input_lens, self.labels: outputs}
-            _, loss, summary = sess.run([self.train_ops, self.loss, self.summary_op], feed_dict)
+            _, loss, summary, pred = sess.run([self.train_ops, self.loss, self.summary_op, self.logits], feed_dict)
             self.train_summary_writer.add_summary(summary, global_t)
+
+            # save statistics
+            total_word_num += np.sum(input_lens)
             losses.append(loss)
+            predictions.extend(np.argmax(pred, axis=1).tolist())
+            ground_truth.extend(outputs.tolist())
             global_t += 1
             local_t += 1
+
+            # print intermediate progress of training every 10%
             if local_t % (train_feed.num_batch / 10) == 0:
                 train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
                 print("%.2f train loss %f" % (local_t / float(train_feed.num_batch), float(train_loss)))
+
+        # print final metrics
+        self.metric("TRAIN", predictions, ground_truth)
         return global_t, losses
 
-    def valid(self, t, sess, valid_feed):
+    def valid(self, name, sess, valid_feed):
+        """
+        No training is involved. Just forward path and compute the metrics
+        :param name: the name, ususally TEST or VALID
+        :param sess: the tf session
+        :param valid_feed: the data feed
+        :return: average loss
+        """
         losses = []
+        predictions = []
+        ground_truth = []
+        total_word_num = 0
+
         while True:
             batch = valid_feed.next_batch()
             if batch is None:
                 break
             inputs, input_lens, outputs = batch
             feed_dict = {self.inputs: inputs, self.input_lens: input_lens, self.labels: outputs}
-            loss, summary = sess.run([self.loss, self.summary_op], feed_dict)
+            loss, preds = sess.run([self.loss, self.logits], feed_dict)
+
+            # save statistics
+            total_word_num += np.sum(input_lens)
             losses.append(loss)
+            predictions.extend(np.argmax(preds, axis=1).tolist())
+            ground_truth.extend(outputs.tolist())
+
+        # print final stats
+        print("%s loss %f" % (name, float(np.sum(losses) / total_word_num * valid_feed.batch_size)))
+        self.metric(name, predictions, ground_truth)
         return losses
 
 
