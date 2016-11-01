@@ -21,7 +21,8 @@ class MultiTaskSeqClassifier(object):
             self.inputs = tf.placeholder(dtype=tf.int32, shape=(None, None), name="input_seq")
             self.input_lens = tf.placeholder(dtype=tf.int32, shape=(None, ), name="seq_len")
             self.da_labels = tf.placeholder(dtype=tf.int32, shape=(None,), name="dialog_acts")
-            self.senti_labels = tf.placeholder(dtype=tf.float32, shape=(None, 4), name="sentiments")
+            self.senti_labels = tf.placeholder(dtype=tf.float32, shape=(None, data_feed.feature_size[data_feed.SENTI_ID]),
+                                               name="sentiments")
 
             self.learning_rate = tf.Variable(float(config.init_lr), trainable=False)
             self.learning_rate_decay_op = self.learning_rate.assign(self.learning_rate * config.lr_decay)
@@ -65,8 +66,8 @@ class MultiTaskSeqClassifier(object):
             self.dialog_acts = self.fnn(last_outputs, data_feed.feature_size[data_feed.DA_ID], [100], "dialog_act_fnn")
             self.sentiments = self.fnn(last_outputs, data_feed.feature_size[data_feed.SENTI_ID], [100], "setiment_fnn")
 
-        self.loss = nn_ops.sparse_softmax_cross_entropy_with_logits(self.dialog_acts, self.da_labels) \
-                    + tf.reduce_sum(tf.pow(self.sentiments - self.senti_labels, 2))
+        self.loss = tf.reduce_sum(nn_ops.sparse_softmax_cross_entropy_with_logits(self.dialog_acts, self.da_labels)) \
+                    + tf.reduce_sum(nn_ops.softmax_cross_entropy_with_logits(self.sentiments, self.senti_labels))
         self.loss /= tf.to_float(batch_size)
 
         tf.scalar_summary("entropy_loss", self.loss)

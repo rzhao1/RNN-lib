@@ -117,7 +117,7 @@ class UttDataFeed(object):
     dialog_acts = ["inform", "question", "other", "goodbye", "disconfirm",
                    "confirm", "non-verbal", "non-understand", "request"]
 
-    feature_size = [2, None, len(dialog_acts), 4, None, None, None]
+    feature_size = [2, None, len(dialog_acts), 3, None, None, None]
 
 
     def __init__(self, name, data, vocab):
@@ -150,7 +150,7 @@ class UttDataFeed(object):
         # current line
         features = dict()
         features[self.DA_ID] = self.dialog_acts.index(line[self.DA_ID])
-        features[self.SENTI_ID] = map(float, line[self.SENTI_ID].split())
+        features[self.SENTI_ID] = map(float, line[self.SENTI_ID].split())[0:3]
         return features
 
     def _shuffle(self):
