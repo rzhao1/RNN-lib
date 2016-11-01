@@ -100,6 +100,7 @@ class UttDataFeed(object):
     batch_indexes = None
     PAD_ID = 0
     UNK_ID = 1
+    vocab_offset = len([PAD_ID, UNK_ID])
 
     # feature names
     SPK_ID = 0
@@ -110,14 +111,19 @@ class UttDataFeed(object):
     EMPATH_ID = 5
     LIWC_ID = 6
 
+    feature_types = ["binary", "multiclass", "multinominal", "regression", "seq"]
+
     # dialog act labels
     dialog_acts = ["inform", "question", "other", "goodbye", "disconfirm",
                    "confirm", "non-verbal", "non-understand", "request"]
 
+    feature_size = [2, None, len(dialog_acts), 4, None, None, None]
+
+
     def __init__(self, name, data, vocab):
         self.name = name
         # plus 4 is because of the 2 built-in words PAD, UNK
-        self.vocab = {word: idx + 2 for idx, word in enumerate(vocab)}
+        self.vocab = {word: idx + self.vocab_offset for idx, word in enumerate(vocab)}
         self.vocab["PAD"] = self.PAD_ID
         self.vocab["UNK"] = self.UNK_ID
 
@@ -142,7 +148,10 @@ class UttDataFeed(object):
 
     def line_2_label(self, prev_line, line, next_line):
         # current line
-        return self.dialog_acts.index(line[self.DA_ID])
+        features = dict()
+        features[self.DA_ID] = self.dialog_acts.index(line[self.DA_ID])
+        features[self.SENTI_ID] = map(float, line[self.SENTI_ID].split())
+        return features
 
     def _shuffle(self):
         np.random.shuffle(self.batch_indexes)
@@ -154,10 +163,15 @@ class UttDataFeed(object):
         max_enc_len = np.max(encoder_len)
 
         encoder_x = np.zeros((self.batch_size, max_enc_len), dtype=np.int32)
-        label_y = np.array(y_rows, dtype=np.int32)
+        label_y = dict()
+        # add dialog act
+        label_y[self.DA_ID] = np.zeros(self.batch_size, dtype=np.int32)
+        label_y[self.SENTI_ID] = np.zeros((self.batch_size, 4), dtype=np.float32)
 
-        for idx, x in enumerate(x_rows):
+        for idx, (x, y) in enumerate(zip(x_rows, y_rows)):
             encoder_x[idx, 0:encoder_len[idx]] = x
+            label_y[self.DA_ID][idx] = y[self.DA_ID]
+            label_y[self.SENTI_ID][idx] = y[self.SENTI_ID]
 
         return encoder_x, encoder_len, label_y
 

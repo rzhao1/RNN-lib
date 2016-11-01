@@ -60,9 +60,9 @@ def main():
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
-            model = MultiTaskSeqClassifier(sess, config, len(train_feed.vocab), len(train_feed.dialog_acts), log_dir)
+            model = MultiTaskSeqClassifier(sess, config, train_feed, log_dir)
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = MultiTaskSeqClassifier(sess, test_config, len(train_feed.vocab), len(train_feed.dialog_acts), log_dir)
+            test_model = MultiTaskSeqClassifier(sess, test_config, train_feed, log_dir)
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
         global_t = 0
