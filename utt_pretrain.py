@@ -11,26 +11,26 @@ from models.SeqClassifier import MultiTaskSeqClassifier
 tf.app.flags.DEFINE_string("data_dir", "Data/ucsc_features", "the dir that has the raw corpus file")
 tf.app.flags.DEFINE_string("work_dir", "seq_working", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
-tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
+tf.app.flags.DEFINE_string("max_vocab_size", 100000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_bool("save_model", False, "Create checkpoints")
 FLAGS = tf.app.flags.FLAGS
 
 
 class Config(object):
-    op = "adam"
-    cell_type = "gru"
+    op = "rmsprop"
+    cell_type = "lstm"
 
     # general config
-    grad_clip = 5.0
+    grad_clip = 4.0
     init_w = 0.05
     batch_size = 20
-    embed_size = 150
-    cell_size = 300
-    num_layer = 1
+    embed_size = 200
+    cell_size = 500
+    num_layer = 2
     max_epoch = 20
 
     # SGD training related
-    init_lr = 0.005
+    init_lr = 0.001
     lr_hold = 1
     lr_decay = 0.6
     keep_prob = 1.0
@@ -120,7 +120,7 @@ def main():
                 print("!!Early stop due to run out of patience!!")
                 break
 
-        print("Best valid loss %f and perpleixyt %f" % (best_valid_loss, np.exp(best_valid_loss)))
+        print("Best valid loss %f" % (best_valid_loss))
         print("Done training")
 
 if __name__ == "__main__":

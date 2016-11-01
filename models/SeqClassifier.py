@@ -1,5 +1,4 @@
 import tensorflow as tf
-from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import embedding_ops
 from tensorflow.python.ops import nn_ops
@@ -135,8 +134,10 @@ class MultiTaskSeqClassifier(object):
                 print("%.2f train loss %f" % (local_t / float(train_feed.num_batch), float(train_loss)))
 
         # print final metrics
+        train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
+        print("TRAIN loss %f" % (float(train_loss)))
         self.metric("TRAIN", predictions, ground_truth)
-        return global_t, losses
+        return global_t, train_loss
 
     def valid(self, name, sess, valid_feed):
         """
@@ -166,8 +167,9 @@ class MultiTaskSeqClassifier(object):
             ground_truth.extend(outputs.tolist())
 
         # print final stats
-        print("%s loss %f" % (name, float(np.sum(losses) / total_word_num * valid_feed.batch_size)))
+        valid_loss = float(np.sum(losses) / total_word_num * valid_feed.batch_size)
+        print("%s loss %f" % (name, valid_loss))
         self.metric(name, predictions, ground_truth)
-        return losses
+        return valid_loss
 
 

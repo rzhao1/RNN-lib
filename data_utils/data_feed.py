@@ -172,7 +172,7 @@ class UttDataFeed(object):
         if shuffle:
             self._shuffle()
 
-        print("%s begins training with %d batches" % (self.name, self.num_batch))
+        print("::%s begins training with %d batches" % (self.name, self.num_batch))
 
     def next_batch(self):
         if self.ptr < self.num_batch:
