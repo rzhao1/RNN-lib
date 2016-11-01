@@ -165,7 +165,7 @@ class UttCorpus(object):
     valid_data = None
     test_data = None
 
-    def __init__(self, data_dir, data_name, split_size):
+    def __init__(self, data_dir, data_name, split_size, max_vocab_size):
         """"
         Each utt is a tuple, with various features
         :param split_size: size of training:valid:test
@@ -181,13 +181,13 @@ class UttCorpus(object):
                 self._parse_file(f.readlines(), split_size)
 
         # get vocabulary
-        self.vocab = self.get_vocab()
+        self.vocab = self.get_vocab(max_vocab_size)
 
         self.print_stats("train", self.train_data)
         self.print_stats("valid", self.valid_data)
         self.print_stats("test", self.test_data)
 
-    def get_vocab(self):
+    def get_vocab(self, max_vocab_size):
         # get vocabulary dictionary
         vocab_cnt = {}
         for line in self.train_data:
@@ -196,7 +196,8 @@ class UttCorpus(object):
                 vocab_cnt[tkn] = cnt + 1
         vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
         vocab_cnt = sorted(vocab_cnt, reverse=True)
-        return [key for cnt, key in vocab_cnt]
+        vocab = [key for cnt, key in vocab_cnt]
+        return vocab[0:max_vocab_size]
 
     def print_stats(self, name, data):
         avg_len = float(np.mean([len(x[self.TEXT_ID].split()) for x in data]))

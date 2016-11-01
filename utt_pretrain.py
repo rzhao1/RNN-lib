@@ -11,6 +11,7 @@ from models.MultiSeqClassifier import MultiSeqClassifier
 tf.app.flags.DEFINE_string("data_dir", "Data/ucsc_features", "the dir that has the raw corpus file")
 tf.app.flags.DEFINE_string("work_dir", "seq_working", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
+tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_bool("forward_only", False, "Only do decoding")
 tf.app.flags.DEFINE_bool("save_model", False, "Create checkpoints")
 FLAGS = tf.app.flags.FLAGS
@@ -36,7 +37,7 @@ class Config(object):
 
 def main():
     # load corpus
-    api = UttCorpus(FLAGS.data_dir, "combine_result.txt", [7,1,2])
+    api = UttCorpus(FLAGS.data_dir, "combine_result.txt", [7,1,2], FLAGS.max_vocab_size)
     corpus_data = api.get_corpus()
 
     # convert to numeric input outputs that fits into TF models

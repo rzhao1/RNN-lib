@@ -21,6 +21,11 @@ class WordSeqDataFeed(object):
         self.name = name
         # plus 4 is because of the 4 built-in words PAD, UNK, GO and EOS
         self.vocab = {word:idx+4 for idx, word in enumerate(vocab)}
+        self.vocab["PAD"] = self.PAD_ID
+        self.vocab["UNK"] = self.UNK_ID
+        self.vocab["GO"] = self.GO_ID
+        self.vocab["EOS"] = self.EOS_ID
+
         data_x, data_y = data
 
         # convert data into ids
@@ -43,7 +48,7 @@ class WordSeqDataFeed(object):
 
     def _prepare_batch(self, selected_index):
         x_rows = [self.id_xs[idx] for idx in selected_index]
-        y_rows = [self.id_ys[idx] for idx in selected_index]
+        y_rows = [[self.PAD_ID] + self.id_ys[idx] + [self.EOS_ID] for idx in selected_index]
         encoder_len = np.array([len(row) for row in x_rows], dtype=np.int32)
         decoder_len = np.array([len(row) for row in y_rows], dtype=np.int32)
 
@@ -113,6 +118,8 @@ class UttDataFeed(object):
         self.name = name
         # plus 4 is because of the 2 built-in words PAD, UNK
         self.vocab = {word: idx + 2 for idx, word in enumerate(vocab)}
+        self.vocab["PAD"] = self.PAD_ID
+        self.vocab["UNK"] = self.UNK_ID
 
         # convert data into ids
         self.id_text = []
