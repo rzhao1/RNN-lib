@@ -38,7 +38,7 @@ class WordSeqDataFeed(object):
         all_lens = [len(line) for line in self.id_xs]
         self.indexes = list(np.argsort(all_lens))
         self.data_size = len(self.id_xs)
-        print("%s feed loads %d samples" % self.data_size)
+        print("%s feed loads %d samples" ,name, self.data_size)
 
     def line_2_ids(self, line):
         return [self.vocab.get(word, self.UNK_ID) for word in line.split()]

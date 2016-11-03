@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import json
-
+from nltk.tokenize.regexp import WordPunctTokenizer
 
 class WordSeqCorpus(object):
     train_x = None
@@ -11,7 +11,7 @@ class WordSeqCorpus(object):
     test_x = None
     test_y = None
 
-    def __init__(self, data_dir, data_name, line_thres, split_size):
+    def __init__(self, data_dir, data_name, split_size, max_vocab_size,line_thres):
         """"
         :param line_thres: how many line will be merged as encoding sentensce
         :param split_size: size of training:valid:test
@@ -23,7 +23,7 @@ class WordSeqCorpus(object):
         self.tokenizer = WordPunctTokenizer().tokenize
         self.line_threshold = line_thres
         self.split_size = split_size
-
+	self.max_vocab_size=max_vocab_size
         # try to load from existing file
         if not self.load_data():
             with open(os.path.join(data_dir, data_name), "rb") as f:
@@ -45,7 +45,8 @@ class WordSeqCorpus(object):
                 vocab_cnt[tkn] = cnt + 1
         vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
         vocab_cnt = sorted(vocab_cnt, reverse=True)
-        return [key for cnt, key in vocab_cnt]
+        vocab=[key for cnt,key in vocab_cnt]
+        return vocab[0:self.max_vocab_size]
 
     def print_stats(self, name, data):
         avg_len = float(np.mean([len(x.split()) for x in data]))
