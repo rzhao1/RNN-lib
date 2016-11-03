@@ -9,6 +9,7 @@ from models.seq2seq_nt import seq2seq
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
+tf.app.flags.DEFINE_string("data_file", "clean_data_ran.txt", "the file that contains the raw data")
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
@@ -44,7 +45,7 @@ class Config(object):
 
 def main():
     # load corpus
-    api = WordSeqCorpus(FLAGS.data_dir, "clean_data.txt", [7,1,2], FLAGS.max_vocab_size,
+    api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7,1,2], FLAGS.max_vocab_size,
                         FLAGS.max_enc_len, FLAGS.max_dec_len, Config.line_thres)
     corpus_data = api.get_corpus()
 
@@ -52,6 +53,9 @@ def main():
     train_feed = WordSeqDataFeed("Train", corpus_data["train"], api.vocab)
     valid_feed = WordSeqDataFeed("Valid", corpus_data["valid"], api.vocab)
     test_feed = WordSeqDataFeed("Test", corpus_data["test"], api.vocab)
+
+    if not os.path.exists(FLAGS.work_dir):
+        os.mkdir(FLAGS.work_dir)
 
     log_dir = os.path.join(FLAGS.work_dir, "run" + str(int(time.time())))
     os.mkdir(log_dir)
@@ -66,8 +70,10 @@ def main():
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
             model = seq2seq(sess, config, len(train_feed.vocab), log_dir)
+
         with tf.variable_scope("model", reuse=True, initializer=initializer):
             test_model = seq2seq(sess, test_config, len(train_feed.vocab), log_dir)
+
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
         global_t = 0
@@ -91,8 +97,8 @@ def main():
         for epoch in range(config.max_epoch):
             print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
             # begin validation
-          #  valid_feed.epoch_init(test_config.batch_size, shuffle=False)
-          #  test_model.valid("VALID", sess, valid_feed)
+            valid_feed.epoch_init(test_config.batch_size, shuffle=False)
+            test_model.valid("VALID", sess, valid_feed)
 
             train_feed.epoch_init(config.batch_size, shuffle=True)
             global_t, train_loss = model.train(global_t, sess, train_feed)

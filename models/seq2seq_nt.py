@@ -70,16 +70,15 @@ class seq2seq(object):
                 b = tf.get_variable('linear_b', [vocab_size], dtype=tf.float32, initializer=tf.zeros_initializer)
 
                 # This part adapted from http://www.wildml.com/2016/08/rnns-in-tensorflow-a-practical-guide-and-undocumented-features/
-                self.logits_flat = tf.matmul(tf.reshape(output, [-1, utt_cell_size]), W) + b
-                self.labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:max_decode_sent_len], [-1, 1]), squeeze_dims=[1])
-                weights = tf.to_float(tf.sign(self.labels_flat))
-                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(self.logits_flat, self.labels_flat)
+                logits_flat = tf.matmul(tf.reshape(output, [-1, utt_cell_size]), W) + b
+                labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:max_decode_sent_len], [-1, 1]), squeeze_dims=[1])
+                weights = tf.to_float(tf.sign(labels_flat))
+                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
                 self.losses *= weights
                 self.mean_loss = tf.reduce_sum(self.losses) / tf.cast(batch_size, tf.float32)
 
                 tvars = tf.trainable_variables()
-                for v in tvars:
-                    print("Trainable %s" % v.name)
+                self.print_model_stats(tvars)
                 tf.scalar_summary('summary/batch_loss', self.mean_loss)
 
                 if config.op == "adam":
@@ -94,6 +93,18 @@ class seq2seq(object):
                 self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V1)
         self.merged = tf.merge_all_summaries()
 
+    def print_model_stats(self, tvars):
+        total_parameters = 0
+        for variable in tvars:
+            print("Trainable %s" % variable.name)
+            # shape is an array of tf.Dimension
+            shape = variable.get_shape()
+            variable_parametes = 1
+            for dim in shape:
+                variable_parametes *= dim.value
+            total_parameters += variable_parametes
+        print("Total number of trainble parameters is %d" % total_parameters)
+
     def train(self, global_t, sess, train_feed):
         losses = []
         local_t = 0
@@ -104,10 +115,10 @@ class seq2seq(object):
                 break
             encoder_len, decoder_len, encoder_x, decoder_y = batch
 
-            fetches = [self.train_ops, self.mean_loss, self.merged, self.losses, self.labels_flat, self.logits_flat]
+            fetches = [self.train_ops, self.mean_loss, self.merged]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len,
                          self.decoder_lens: decoder_len}
-            _, loss, summary, med_loss, labels, logits = sess.run(fetches, feed_dict)
+            _, loss, summary = sess.run(fetches, feed_dict)
             losses.append(loss)
             global_t += 1
             local_t += 1
@@ -134,11 +145,15 @@ class seq2seq(object):
             batch = valid_feed.next_batch()
             if batch is None:
                 break
+
             encoder_len, decoder_len, encoder_x, decoder_y = batch
-            fetches = [self.train_ops, self.mean_loss, self.merged, self.losses, self.labels_flat, self.logits_flat]
+
+            fetches = [self.mean_loss]
+
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len,
                          self.decoder_lens: decoder_len}
-            _, loss, summary, med_loss, labels, logits = sess.run(fetches, feed_dict)
+
+            loss = sess.run(fetches, feed_dict)
             total_word_num += np.sum(decoder_len - 1) # since we remove GO for prediction
             losses.append(loss)
 
