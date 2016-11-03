@@ -17,20 +17,20 @@ FLAGS = tf.app.flags.FLAGS
 
 
 class Config(object):
-    op = "adam"
-    cell_type = "gru"
+    op = "rmsprop"
+    cell_type = "lstm"
 
     # general config
-    grad_clip = 5.0
+    grad_clip = 4.0
     init_w = 0.05
     batch_size = 20
-    embed_size = 150
-    cell_size = 300
-    num_layer = 1
+    embed_size = 200
+    cell_size = 500
+    num_layer = 2
     max_epoch = 20
 
     # SGD training related
-    init_lr = 0.005
+    init_lr = 0.001
     lr_hold = 1
     lr_decay = 0.6
     keep_prob = 1.0
@@ -60,9 +60,9 @@ def main():
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
-            model = MultiTaskSeqClassifier(sess, config, len(train_feed.vocab), len(train_feed.dialog_acts), log_dir)
+            model = MultiTaskSeqClassifier(sess, config, train_feed, log_dir)
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = MultiTaskSeqClassifier(sess, test_config, len(train_feed.vocab), len(train_feed.dialog_acts), log_dir)
+            test_model = MultiTaskSeqClassifier(sess, test_config, train_feed, log_dir)
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
         global_t = 0
@@ -120,7 +120,7 @@ def main():
                 print("!!Early stop due to run out of patience!!")
                 break
 
-        print("Best valid loss %f and perpleixyt %f" % (best_valid_loss, np.exp(best_valid_loss)))
+        print("Best valid loss %f" % (best_valid_loss))
         print("Done training")
 
 if __name__ == "__main__":
