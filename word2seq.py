@@ -23,7 +23,7 @@ class Config(object):
     # general config
     grad_clip = 5.0
     init_w = 0.05
-    batch_size = 20
+    batch_size = 50
     embed_size = 150
     cell_size = 300
     num_layer = 1
@@ -42,7 +42,7 @@ class Config(object):
 
 def main():
     # load corpus
-    api = WordSeqCorpus(FLAGS.data_dir, "clean_data_Ran.txt", [7,1,2], FLAGS.max_vocab_size,Config.line_thres)
+    api = WordSeqCorpus(FLAGS.data_dir, "clean_data.txt", [7,1,2], FLAGS.max_vocab_size,Config.line_thres)
     corpus_data = api.get_corpus()
 
     # convert to numeric input outputs that fits into TF models
@@ -57,7 +57,6 @@ def main():
     test_config.keep_prob = 1.0
     test_config.batch_size = 200
     pp(config)
-
 
     # begin training
     with tf.Session() as sess:

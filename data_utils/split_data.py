@@ -3,6 +3,7 @@ import numpy as np
 import json
 from nltk.tokenize.regexp import WordPunctTokenizer
 
+
 class WordSeqCorpus(object):
     train_x = None
     train_y = None
@@ -11,19 +12,19 @@ class WordSeqCorpus(object):
     test_x = None
     test_y = None
 
-    def __init__(self, data_dir, data_name, split_size, max_vocab_size,line_thres):
+    def __init__(self, data_dir, data_name, split_size, max_vocab_size, line_thres):
         """"
         :param line_thres: how many line will be merged as encoding sentensce
         :param split_size: size of training:valid:test
 
         """
 
-        self._data_dir  = data_dir
+        self._data_dir = data_dir
         self._data_name = data_name
         self.tokenizer = WordPunctTokenizer().tokenize
         self.line_threshold = line_thres
         self.split_size = split_size
-	self.max_vocab_size=max_vocab_size
+        self.max_vocab_size = max_vocab_size
         # try to load from existing file
         if not self.load_data():
             with open(os.path.join(data_dir, data_name), "rb") as f:
@@ -45,7 +46,7 @@ class WordSeqCorpus(object):
                 vocab_cnt[tkn] = cnt + 1
         vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
         vocab_cnt = sorted(vocab_cnt, reverse=True)
-        vocab=[key for cnt,key in vocab_cnt]
+        vocab = [key for cnt, key in vocab_cnt]
         return vocab[0:self.max_vocab_size]
 
     def print_stats(self, name, data):
@@ -82,9 +83,9 @@ class WordSeqCorpus(object):
             speakers.extend([l.split("|||")[0] for l in movies[key]])
             utterances.extend([l.split("|||")[1] for l in movies[key]])
 
-        total_size=len(utterances)
-        train_size=int(total_size*split_size[0]/10)
-        valid_size=int(total_size*split_size[1]/10)
+        total_size = len(utterances)
+        train_size = int(total_size * split_size[0] / 10)
+        valid_size = int(total_size * split_size[1] / 10)
 
         content_xs = []
         content_ys = []
@@ -92,11 +93,11 @@ class WordSeqCorpus(object):
         print("Begin creating data")
         for idx, (spker, utt) in enumerate(zip(speakers, utterances)):
             # if we are at "a" in $$$ a b c, ignore the input
-            if utt == "$$$" or "$$$" in utterances[max(0, idx-self.line_threshold): idx]:
+            if utt == "$$$" or "$$$" in utterances[max(0, idx - self.line_threshold): idx]:
                 continue
 
-            content_x = " ".join(utterances[max(0, idx-self.line_threshold):idx])
-            if spker == speakers[idx-1]:
+            content_x = " ".join(utterances[max(0, idx - self.line_threshold):idx])
+            if spker == speakers[idx - 1]:
                 content_x += " #"
             content_xs.append(content_x)
             content_ys.append(utt)
@@ -104,10 +105,10 @@ class WordSeqCorpus(object):
         # split the data
         self.train_x = train_x = content_xs[0: train_size]
         self.train_y = train_y = content_ys[0: train_size]
-        self.valid_x = valid_x = content_xs[train_size: train_size+valid_size]
-        self.valid_y = valid_y = content_ys[train_size: train_size+valid_size]
-        self.test_x = test_x = content_xs[train_size+valid_size:]
-        self.test_y = test_y = content_ys[train_size+valid_size:]
+        self.valid_x = valid_x = content_xs[train_size: train_size + valid_size]
+        self.valid_y = valid_y = content_ys[train_size: train_size + valid_size]
+        self.test_x = test_x = content_xs[train_size + valid_size:]
+        self.test_y = test_y = content_ys[train_size + valid_size:]
 
         # begin dumpping data to file
         self.dump_data("train_x.txt", train_x)
@@ -134,6 +135,7 @@ class WordSeqCorpus(object):
                 lines = f.readlines()
                 lines = [l.strip() for l in lines]
             return lines
+
         print("Loaded from cache")
         self.train_x = load_file("train_x.txt")
         self.train_y = load_file("train_y.txt")
@@ -277,36 +279,3 @@ class UttCorpus(object):
         return {"train": self.train_data,
                 "valid": self.valid_data,
                 "test": self.test_data}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
