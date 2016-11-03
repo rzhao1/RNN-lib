@@ -25,6 +25,7 @@ class WordSeqDataFeed(object):
         self.vocab["UNK_"] = self.UNK_ID
         self.vocab["GO_"] = self.GO_ID
         self.vocab["EOS_"] = self.EOS_ID
+        # make sure we add 4 new special symbol
         assert len(self.vocab) == (len(vocab)+4)
 
         data_x, data_y = data

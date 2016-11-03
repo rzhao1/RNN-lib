@@ -45,16 +45,26 @@ class seq2seq(object):
 
         with tf.variable_scope('seqToseq') as scope:
             with tf.variable_scope('enc'):
-                gru_cell_enc = tf.nn.rnn_cell.GRUCell(utt_cell_size)
-                _, encoder_state = rnn.dynamic_rnn(gru_cell_enc, encoder_embedding, sequence_length=encoder_lens,
-                                                   dtype=tf.float32)
+                if config.cell_type == "gru":
+                    cell_enc = tf.nn.rnn_cell.GRUCell(utt_cell_size)
+                elif config.cell_type == "lstm":
+                    cell_enc = tf.nn.rnn_cell.LSTMCell(utt_cell_size, state_is_tuple=True)
+                else:
+                    raise ValueError("unknown cell type")
+
+                _, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding, sequence_length=encoder_lens, dtype=tf.float32)
 
             with tf.variable_scope('dec'):
-                with tf.variable_scope('gru_dec'):
-                    gru_cell_dec = rnn_cell.GRUCell(utt_cell_size)
-                    # Tony: decoder length - 1 since we don't want to feed in EOS
-                    output, _ = rnn.dynamic_rnn(gru_cell_dec, decoder_embedding, initial_state=encoder_state,
-                                                sequence_length=decoder_lens-1, dtype=tf.float32)
+                if config.cell_type == "gru":
+                    cell_dec = tf.nn.rnn_cell.GRUCell(utt_cell_size)
+                elif config.cell_type == "lstm":
+                    cell_dec = tf.nn.rnn_cell.LSTMCell(utt_cell_size, state_is_tuple=True)
+                else:
+                    raise ValueError("unknown cell type")
+
+                # Tony: decoder length - 1 since we don't want to feed in EOS
+                output, _ = rnn.dynamic_rnn(cell_dec, decoder_embedding, initial_state=encoder_last_state,
+                                            sequence_length=decoder_lens-1, dtype=tf.float32)
                 W = tf.get_variable('linear_W', [utt_cell_size, vocab_size], dtype=tf.float32)
                 b = tf.get_variable('linear_b', [vocab_size], dtype=tf.float32, initializer=tf.zeros_initializer)
 
@@ -70,7 +80,14 @@ class seq2seq(object):
                 for v in tvars:
                     print("Trainable %s" % v.name)
                 tf.scalar_summary('summary/batch_loss', self.mean_loss)
-                optim = tf.train.AdamOptimizer(self.learning_rate)
+
+                if config.op == "adam":
+                    optim = tf.train.AdamOptimizer(self.learning_rate)
+                elif config.op == "rmsprop":
+                    optim = tf.train.RMSPropOptimizer(self.learning_rate)
+                else:
+                    optim = tf.train.GradientDescentOptimizer(self.learning_rate)
+
                 grads, _ = tf.clip_by_global_norm(tf.gradients(self.mean_loss, tvars), config.grad_clip)
                 self.train_ops = optim.apply_gradients(zip(grads, tvars))
                 self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V1)
