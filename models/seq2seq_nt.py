@@ -91,16 +91,13 @@ class seq2seq(object):
                          self.decoder_lens: decoder_len}
             _, loss, summary, med_loss, labels, logits = sess.run(fetches, feed_dict)
             losses.append(loss)
-            if math.isnan(loss):
-                print (labels)
-                print (logits)
             global_t += 1
             local_t += 1
-            total_word_num += np.sum(decoder_len)
+            total_word_num += np.sum(decoder_len-1)  # since we remove GO for prediction
             if local_t % (train_feed.num_batch / 50) == 0:
-                print (np.sum(losses))
                 train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
-                print("%.2f train loss %f" % (local_t / float(train_feed.num_batch), float(train_loss)))
+                print("%.2f train loss %f perleixty %f" %
+                      (local_t / float(train_feed.num_batch), float(train_loss), np.exp(train_loss)))
 
         return global_t, losses
 
@@ -113,7 +110,6 @@ class seq2seq(object):
         :return: average loss
         """
         losses = []
-        local_t = 0
         total_word_num = 0
 
         while True:
@@ -125,10 +121,10 @@ class seq2seq(object):
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len,
                          self.decoder_lens: decoder_len}
             _, loss, summary, med_loss, labels, logits = sess.run(fetches, feed_dict)
-            print (labels)
-            # print(logits)
+            total_word_num += np.sum(decoder_len - 1) # since we remove GO for prediction
             losses.append(loss)
 
         # print final stats
-        print("%s loss %f" % (name, float(np.sum(losses) / total_word_num * valid_feed.batch_size)))
+        valid_loss = float(np.sum(losses) / total_word_num * valid_feed.batch_size)
+        print("%s loss %f and perplexity %f" % (name, valid_loss, np.exp(valid_loss)))
         return losses
