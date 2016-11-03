@@ -52,7 +52,8 @@ class seq2seq(object):
                 else:
                     raise ValueError("unknown cell type")
 
-                _, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding, sequence_length=encoder_lens, dtype=tf.float32)
+                _, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding, sequence_length=encoder_lens,
+                                                        dtype=tf.float32)
 
             with tf.variable_scope('dec'):
                 if config.cell_type == "gru":

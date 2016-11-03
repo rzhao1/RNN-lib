@@ -33,9 +33,9 @@ class WordSeqCorpus(object):
         # get vocabulary\
         self.vocab = self.get_vocab()
 
-        self.print_stats("train", self.train_x)
-        self.print_stats("valid", self.valid_x)
-        self.print_stats("test", self.test_x)
+        self.print_stats("train", self.train_x, self.train_y)
+        self.print_stats("valid", self.valid_x, self.valid_y)
+        self.print_stats("test", self.test_x, self.test_y)
 
     def get_vocab(self):
         # get vocabulary dictionary
@@ -49,9 +49,15 @@ class WordSeqCorpus(object):
         vocab = [key for cnt, key in vocab_cnt]
         return vocab[0:self.max_vocab_size]
 
-    def print_stats(self, name, data):
-        avg_len = float(np.mean([len(x.split()) for x in data]))
-        print ('%s avg encoder len %.2f of %d lines' % (name, avg_len, len(data)))
+    def print_stats(self, name, enc_data, dec_data):
+        enc_lens = [len(x.split()) for x in enc_data]
+        avg_len = float(np.mean(enc_lens))
+        max_len = float(np.max(enc_lens))
+        dec_lens = [len(x.split()) for x in dec_data]
+        dec_avg_len = float(np.mean(dec_lens))
+        dec_max_len = float(np.max(dec_lens))
+        print ('%s encoder avg len %.2f max len %.2f of %d lines' % (name, avg_len, max_len, len(enc_data)))
+        print ('%s decoder avg len %.2f max len %.2f of %d lines' % (name, dec_avg_len, dec_max_len, len(dec_data)))
 
     def _parse_file(self, lines, split_size):
         """
