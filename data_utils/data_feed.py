@@ -20,11 +20,12 @@ class WordSeqDataFeed(object):
     def __init__(self, name, data, vocab):
         self.name = name
         # plus 4 is because of the 4 built-in words PAD, UNK, GO and EOS
-        self.vocab = {word:idx+4 for idx, word in enumerate(vocab)}
-        self.vocab["PAD"] = self.PAD_ID
-        self.vocab["UNK"] = self.UNK_ID
-        self.vocab["GO"] = self.GO_ID
-        self.vocab["EOS"] = self.EOS_ID
+        self.vocab = {word: idx+4 for idx, word in enumerate(vocab)}
+        self.vocab["PAD_"] = self.PAD_ID
+        self.vocab["UNK_"] = self.UNK_ID
+        self.vocab["GO_"] = self.GO_ID
+        self.vocab["EOS_"] = self.EOS_ID
+        assert len(self.vocab) == (len(vocab)+4)
 
         data_x, data_y = data
 

@@ -2,6 +2,8 @@ import os
 import time
 from beeprint import pp
 import numpy as np
+from tensorflow.python.ops import nn_ops
+
 import tensorflow as tf
 import math
 from tensorflow.python.ops import embedding_ops, rnn_cell, rnn
@@ -19,6 +21,7 @@ class seq2seq(object):
         self.encoder_batch = encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="encoder_seq")
         self.decoder_batch = decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="decoder_seq")
         self.encoder_lens = encoder_lens = tf.placeholder(dtype=tf.int32, shape=(None), name="encoder_lens")
+        # include GO sent and EOS
         self.decoder_lens = decoder_lens = tf.placeholder(dtype=tf.int32, shape=(None), name="decoder_lens")
         self.learning_rate = tf.Variable(float(config.init_lr), trainable=False)
         self.learning_rate_decay_op = self.learning_rate.assign(self.learning_rate * config.lr_decay)
@@ -57,10 +60,10 @@ class seq2seq(object):
 
                 # This part adapted from http://www.wildml.com/2016/08/rnns-in-tensorflow-a-practical-guide-and-undocumented-features/
                 self.logits_flat = tf.matmul(tf.reshape(output, [-1, utt_cell_size]), W) + b
-                self.labels_flat = tf.reshape(decoder_batch[:, 1:], [-1, 1])
+                self.labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:max_decode_sent_len], [-1, 1]), squeeze_dims=[1])
                 weights = tf.to_float(tf.sign(self.labels_flat))
-                self.losses = tf.nn.seq2seq.sequence_loss_by_example([self.logits_flat], [self.labels_flat], [weights],
-                                                                     average_across_timesteps=False)
+                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(self.logits_flat, self.labels_flat)
+                self.losses *= weights
                 self.mean_loss = tf.reduce_sum(self.losses) / tf.cast(batch_size, tf.float32)
 
                 tvars = tf.trainable_variables()
@@ -94,7 +97,7 @@ class seq2seq(object):
             global_t += 1
             local_t += 1
             total_word_num += np.sum(decoder_len)
-            if local_t % (train_feed.num_batch / 10) == 0:
+            if local_t % (train_feed.num_batch / 50) == 0:
                 print (np.sum(losses))
                 train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
                 print("%.2f train loss %f" % (local_t / float(train_feed.num_batch), float(train_loss)))
