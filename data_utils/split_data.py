@@ -12,7 +12,7 @@ class WordSeqCorpus(object):
     test_x = None
     test_y = None
 
-    def __init__(self, data_dir, data_name, split_size, max_vocab_size, line_thres):
+    def __init__(self, data_dir, data_name, split_size, max_vocab_size, max_enc_len, max_dec_len, line_thres):
         """"
         :param line_thres: how many line will be merged as encoding sentensce
         :param split_size: size of training:valid:test
@@ -25,17 +25,24 @@ class WordSeqCorpus(object):
         self.line_threshold = line_thres
         self.split_size = split_size
         self.max_vocab_size = max_vocab_size
+        self.max_enc_len = max_enc_len
+        self.max_dec_len = max_dec_len
         # try to load from existing file
         if not self.load_data():
             with open(os.path.join(data_dir, data_name), "rb") as f:
                 self._parse_file(f.readlines(), split_size)
 
+        # clip data
+        self.train_x, self.train_y = self.clip_to_max_len(self.train_x, self.train_y)
+        self.valid_x, self.valid_y = self.clip_to_max_len(self.valid_x, self.valid_y)
+        self.test_x, self.test_y = self.clip_to_max_len(self.test_x, self.test_y)
+
         # get vocabulary\
         self.vocab = self.get_vocab()
 
-        self.print_stats("train", self.train_x, self.train_y)
-        self.print_stats("valid", self.valid_x, self.valid_y)
-        self.print_stats("test", self.test_x, self.test_y)
+        self.print_stats("TRAIN", self.train_x, self.train_y)
+        self.print_stats("VALID", self.valid_x, self.valid_y)
+        self.print_stats("TEST", self.test_x, self.test_y)
 
     def get_vocab(self):
         # get vocabulary dictionary
@@ -48,6 +55,11 @@ class WordSeqCorpus(object):
         vocab_cnt = sorted(vocab_cnt, reverse=True)
         vocab = [key for cnt, key in vocab_cnt]
         return vocab[0:self.max_vocab_size]
+
+    def clip_to_max_len(self, enc_data, dec_data):
+        new_enc_data = [" ".join(x.split()[-self.max_enc_len:]) for x in enc_data]
+        new_dec_data = [" ".join(x.split()[0:self.max_dec_len]) for x in dec_data]
+        return new_enc_data, new_dec_data
 
     def print_stats(self, name, enc_data, dec_data):
         enc_lens = [len(x.split()) for x in enc_data]
