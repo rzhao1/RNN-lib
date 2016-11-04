@@ -21,6 +21,10 @@ class WordSeqCorpus(object):
 
         self._data_dir = data_dir
         self._data_name = data_name
+        self._cache_dir = os.path.join(data_dir, "word_seq_split")
+        if not os.path.exists(self._cache_dir):
+            os.mkdir(self._cache_dir)
+
         self.tokenizer = WordPunctTokenizer().tokenize
         self.line_threshold = line_thres
         self.split_size = split_size
@@ -140,16 +144,16 @@ class WordSeqCorpus(object):
         if os.path.exists(file_name):
             raise ValueError("File already exists. Abort dumping")
         print("Dumping to %s with %d lines" % (file_name, len(lines)))
-        with open(file_name, "wb") as f:
+        with open(os.path.join(self._cache_dir, file_name), "wb") as f:
             for line in lines:
                 f.write(line + "\n")
 
     def load_data(self):
-        if not os.path.exists("train_x.txt"):
+        if not os.path.exists(os.path.join(self._cache_dir, "train_x.txt")):
             return False
 
         def load_file(file_name):
-            with open(file_name, "rb") as f:
+            with open(os.path.join(self._cache_dir, file_name), "rb") as f:
                 lines = f.readlines()
                 lines = [l.strip() for l in lines]
             return lines
