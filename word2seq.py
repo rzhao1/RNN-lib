@@ -13,9 +13,9 @@ tf.app.flags.DEFINE_string("data_file", "clean_data_ran.txt", "the file that con
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
-tf.app.flags.DEFINE_string("max_enc_len", 200, "The largest number of words in encoder")
-tf.app.flags.DEFINE_string("max_dec_len", 100, "The largest number of words in decoder")
-tf.app.flags.DEFINE_bool("save_model", False, "Create checkpoints")
+tf.app.flags.DEFINE_string("max_enc_len", 100, "The largest number of words in encoder")
+tf.app.flags.DEFINE_string("max_dec_len", 50, "The largest number of words in decoder")
+tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
 FLAGS = tf.app.flags.FLAGS
 
 
@@ -28,7 +28,7 @@ class Config(object):
     init_w = 0.05
     batch_size = 50
     embed_size = 150
-    cell_size = 300
+    cell_size = 1000
     num_layer = 1
     max_epoch = 20
     line_thres =2
@@ -72,7 +72,7 @@ def main():
             model = seq2seq(sess, config, len(train_feed.vocab), log_dir)
 
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = seq2seq(sess, test_config, len(train_feed.vocab), log_dir)
+            test_model = seq2seq(sess, test_config, len(train_feed.vocab), None)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
@@ -80,7 +80,7 @@ def main():
         patience = 10  # wait for at least 10 epoch before consider early stop
         valid_loss_threshold = np.inf
         best_valid_loss = np.inf
-        checkpoint_path = os.path.join(ckp_dir, "%s.ckpt" % __name__)
+        checkpoint_path = os.path.join(ckp_dir, "word2seq.ckpt")
 
         if not os.path.exists(ckp_dir):
             os.mkdir(ckp_dir)
@@ -96,9 +96,6 @@ def main():
 
         for epoch in range(config.max_epoch):
             print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
-            # begin validation
-            valid_feed.epoch_init(test_config.batch_size, shuffle=False)
-            test_model.valid("VALID", sess, valid_feed)
 
             train_feed.epoch_init(config.batch_size, shuffle=True)
             global_t, train_loss = model.train(global_t, sess, train_feed)
@@ -124,6 +121,7 @@ def main():
 
                 # still save the best train model
                 if FLAGS.save_model:
+                    print("Saving model!")
                     model.saver.save(sess, checkpoint_path, global_step=epoch)
                 best_valid_loss = valid_loss
 
