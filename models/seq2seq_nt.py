@@ -43,7 +43,7 @@ class seq2seq(object):
                                                                    [-1, 1]), squeeze_dims=[1]))
             decoder_embedding = tf.reshape(decoder_embedding, [-1, max_decode_sent_len_minus_one, config.embed_size])
 
-        with tf.variable_scope('seqToseq') as scope:
+        with tf.variable_scope('seqToseq'):
             with tf.variable_scope('enc'):
                 if config.cell_type == "gru":
                     cell_enc = tf.nn.rnn_cell.GRUCell(utt_cell_size)
@@ -83,11 +83,10 @@ class seq2seq(object):
                 self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
                 self.losses *= weights
                 self.mean_loss = tf.reduce_sum(self.losses) / tf.cast(batch_size, tf.float32)
+                tf.scalar_summary('cross_entropy_loss', self.mean_loss)
+                self.merged = tf.merge_all_summaries()
 
-                tvars = tf.trainable_variables()
-                self.print_model_stats(tvars)
-                tf.scalar_summary('summary/batch_loss', self.mean_loss)
-
+                # choose a optimizer
                 if config.op == "adam":
                     optim = tf.train.AdamOptimizer(self.learning_rate)
                 elif config.op == "rmsprop":
@@ -95,10 +94,16 @@ class seq2seq(object):
                 else:
                     optim = tf.train.GradientDescentOptimizer(self.learning_rate)
 
+                tvars = tf.trainable_variables()
                 grads, _ = tf.clip_by_global_norm(tf.gradients(self.mean_loss, tvars), config.grad_clip)
                 self.train_ops = optim.apply_gradients(zip(grads, tvars))
-                self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V1)
-        self.merged = tf.merge_all_summaries()
+                self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V2)
+
+            if log_dir is not None:
+                self.print_model_stats(tf.trainable_variables())
+                train_log_dir = os.path.join(log_dir, "train")
+                print("Save summary to %s" % log_dir)
+                self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
 
     def print_model_stats(self, tvars):
         total_parameters = 0
@@ -134,8 +139,10 @@ class seq2seq(object):
                 train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
                 print("%.2f train loss %f perleixty %f" %
                       (local_t / float(train_feed.num_batch), float(train_loss), np.exp(train_loss)))
+        train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
+        print("Train loss %f perleixty %f" % (float(train_loss), np.exp(train_loss)))
 
-        return global_t, losses
+        return global_t, train_loss
 
     def valid(self, name, sess, valid_feed):
         """
@@ -167,4 +174,4 @@ class seq2seq(object):
         # print final stats
         valid_loss = float(np.sum(losses) / total_word_num * valid_feed.batch_size)
         print("%s loss %f and perplexity %f" % (name, valid_loss, np.exp(valid_loss)))
-        return losses
+        return valid_loss
