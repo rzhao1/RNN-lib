@@ -60,7 +60,8 @@ class seq2seq(object):
 
                 _, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding, sequence_length=encoder_lens,
                                                         dtype=tf.float32)
-                encoder_last_state = encoder_last_state[-1]
+                if config.num_layer > 1:
+                    encoder_last_state = encoder_last_state[-1]
 
             with tf.variable_scope('dec'):
                 if config.cell_type == "gru":
