@@ -6,7 +6,7 @@ from tensorflow.python.ops import nn_ops
 
 import tensorflow as tf
 import math
-from tensorflow.python.ops import embedding_ops, rnn_cell, rnn
+from tensorflow.python.ops import embedding_ops, rnn_cell, rnn, seq2seq
 
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import embedding_ops
@@ -14,7 +14,7 @@ from tensorflow.python.ops import variable_scope
 
 
 class seq2seq(object):
-    def __init__(self, sess, config, vocab_size, log_dir):
+    def __init__(self, sess, config, vocab_size, log_dir,forward=False, attention=True):
         self.batch_size = batch_size = config.batch_size
         self.utt_cell_size = utt_cell_size = config.cell_size
         self.vocab_size = vocab_size
@@ -58,7 +58,7 @@ class seq2seq(object):
                 if config.num_layer > 1:
                     cell_enc = rnn_cell.MultiRNNCell([cell_enc] * config.num_layer, state_is_tuple=True)
 
-                _, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding, sequence_length=encoder_lens,
+                encoder_outputs, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding, sequence_length=encoder_lens,
                                                         dtype=tf.float32)
                 if config.num_layer > 1:
                     encoder_last_state = encoder_last_state[-1]
@@ -71,8 +71,16 @@ class seq2seq(object):
                 else:
                     raise ValueError("unknown cell type")
 
-                # Tony: decoder length - 1 since we don't want to feed in EOS
-                output, _ = rnn.dynamic_rnn(cell_dec, decoder_embedding, initial_state=encoder_last_state,
+
+                if attention :
+                    encoder_output_af=tf.reshape(encoder_outputs, [batch_size, max_decode_sent_len_minus_one, vocab_size])
+                    top_states = [tf.reshape(e, [batch_size, 1, utt_cell_size]) for e in tf.unpack(encoder_output_af,axis=1)]
+                    attention_states=array_ops.concat(1,top_states)
+                    output,_=seq2seq.attention_decoder([],encoder_last_state,attention_states,cell_dec,vocab_size,loop_function=None)
+
+                else:
+                    # Tony: decoder length - 1 since we don't want to feed in EOS
+                    output, _ = rnn.dynamic_rnn(cell_dec, decoder_embedding, initial_state=encoder_last_state,
                                             sequence_length=decoder_lens-1, dtype=tf.float32)
                 W = tf.get_variable('linear_W', [utt_cell_size, vocab_size], dtype=tf.float32)
                 b = tf.get_variable('linear_b', [vocab_size], dtype=tf.float32, initializer=tf.zeros_initializer)
@@ -98,7 +106,7 @@ class seq2seq(object):
                 tvars = tf.trainable_variables()
                 grads, _ = tf.clip_by_global_norm(tf.gradients(self.mean_loss, tvars), config.grad_clip)
                 self.train_ops = optim.apply_gradients(zip(grads, tvars))
-                self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V2)
+                self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V1)
 
             if log_dir is not None:
                 self.print_model_stats(tf.trainable_variables())

@@ -30,7 +30,7 @@ class Config(object):
     embed_size = 150
     cell_size = 1000
     num_layer = 1
-    max_epoch = 20
+    max_epoch = 1
     line_thres =2
 
     # SGD training related
@@ -62,7 +62,7 @@ def main():
     config = Config()
     test_config = Config()
     test_config.keep_prob = 1.0
-    test_config.batch_size = 200
+    test_config.batch_size = 20
     pp(config)
 
     # begin training
