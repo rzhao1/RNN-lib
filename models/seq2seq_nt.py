@@ -52,8 +52,15 @@ class seq2seq(object):
                 else:
                     raise ValueError("unknown cell type")
 
+                if config.keep_prob < 1.0:
+                    cell_enc = rnn_cell.DropoutWrapper(cell_enc, output_keep_prob=config.keep_prob, input_keep_prob=config.keep_prob)
+
+                if config.num_layer > 1:
+                    cell_enc = rnn_cell.MultiRNNCell([cell_enc] * config.num_layer, state_is_tuple=True)
+
                 _, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding, sequence_length=encoder_lens,
                                                         dtype=tf.float32)
+                encoder_last_state = encoder_last_state[-1]
 
             with tf.variable_scope('dec'):
                 if config.cell_type == "gru":

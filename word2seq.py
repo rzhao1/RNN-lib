@@ -15,7 +15,7 @@ tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar len
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_string("max_enc_len", 200, "The largest number of words in encoder")
 tf.app.flags.DEFINE_string("max_dec_len", 100, "The largest number of words in decoder")
-tf.app.flags.DEFINE_bool("save_model", False, "Create checkpoints")
+tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
 FLAGS = tf.app.flags.FLAGS
 
 
@@ -28,8 +28,8 @@ class Config(object):
     init_w = 0.05
     batch_size = 50
     embed_size = 150
-    cell_size = 300
-    num_layer = 1
+    cell_size = 600
+    num_layer = 2
     max_epoch = 20
     line_thres =2
 
@@ -37,7 +37,7 @@ class Config(object):
     init_lr = 0.005
     lr_hold = 1
     lr_decay = 0.6
-    keep_prob = 1.0
+    keep_prob = 0.5
     improve_threshold = 0.996
     patient_increase = 2.0
     early_stop = True
@@ -96,10 +96,6 @@ def main():
 
         for epoch in range(config.max_epoch):
             print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
-            # begin validation
-            valid_feed.epoch_init(test_config.batch_size, shuffle=False)
-            test_model.valid("VALID", sess, valid_feed)
-
             train_feed.epoch_init(config.batch_size, shuffle=True)
             global_t, train_loss = model.train(global_t, sess, train_feed)
 
