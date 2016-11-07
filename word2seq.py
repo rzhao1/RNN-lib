@@ -58,7 +58,7 @@ def main():
     config = Config()
     test_config = Config()
     test_config.keep_prob = 1.0
-    test_config.batch_size = 20
+    test_config.batch_size = 200
     pp(config)
 
     # convert to numeric input outputs that fits into TF models
