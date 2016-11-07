@@ -25,7 +25,7 @@ class Config(object):
     op = "sgd"
     cell_type = "gru"
 
-    use_attention = False
+    use_attention = True
 
     # general config
     grad_clip = 5.0
