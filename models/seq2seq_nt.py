@@ -154,6 +154,7 @@ class Word2Seq(object):
         losses = []
         local_t = 0
         total_word_num = 0
+        start_time = time.time()
         while True:
             batch = train_feed.next_batch()
             if batch is None:
@@ -172,9 +173,11 @@ class Word2Seq(object):
                 train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
                 print("%.2f train loss %f perleixty %f" %
                       (local_t / float(train_feed.num_batch), float(train_loss), np.exp(train_loss)))
+        end_time = time.time()
 
         train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
-        print("Train loss %f perleixty %f" % (float(train_loss), np.exp(train_loss)))
+        print("Train loss %f perleixty %f with step %d"
+              % (float(train_loss), np.exp(train_loss), (end_time-start_time)/float(local_t)))
 
         return global_t, train_loss
 
@@ -195,12 +198,8 @@ class Word2Seq(object):
                 break
 
             encoder_len, decoder_len, encoder_x, decoder_y = batch
-
             fetches = [self.mean_loss]
-
-            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len,
-                         self.decoder_lens: decoder_len}
-
+            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
             loss = sess.run(fetches, feed_dict)
             total_word_num += np.sum(decoder_len - 1) # since we remove GO for prediction
             losses.append(loss)
