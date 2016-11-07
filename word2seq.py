@@ -22,7 +22,7 @@ FLAGS = tf.app.flags.FLAGS
 
 
 class Config(object):
-    op = "adam"
+    op = "sgd"
     cell_type = "gru"
 
     use_attention = False
@@ -39,7 +39,7 @@ class Config(object):
     max_decoder_size=15
 
     # SGD training related
-    init_lr = 0.005
+    init_lr = 0.6
     lr_hold = 1
     lr_decay = 0.6
     keep_prob = 1.0

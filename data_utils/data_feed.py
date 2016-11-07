@@ -65,11 +65,13 @@ class WordSeqDataFeed(object):
             encoder_x[idx, 0:encoder_len[idx]] = x
             # we discard words that are longer than max_dec_len-2
             if decoder_len[idx] >= max_dec_len:
-                decoder_y[idx, 0:max_dec_len-1] = y[0:max_dec_len-2] + [self.EOS_ID]
+                decoder_y[idx, :] = y[0:max_dec_len-1] + [self.EOS_ID]
+                decoder_len[idx] = max_dec_len
             else:
                 decoder_y[idx, 0: decoder_len[idx]+1] = y + [self.EOS_ID]
+                decoder_len[idx] += 1 # include the new EOS
 
-        return encoder_len, encoder_x, decoder_y
+        return encoder_len, decoder_len, encoder_x, decoder_y
 
     def epoch_init(self, batch_size, shuffle=True):
         # create batch indexes for computation efficiency

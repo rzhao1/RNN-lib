@@ -21,10 +21,9 @@ class Word2Seq(object):
         self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(batch_size, None), name="encoder_seq")
         # max_decoder_size including GO and EOS
         self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(batch_size, config.max_decoder_size), name="decoder_seq")
-        self.encoder_lens = encoder_lens = tf.placeholder(dtype=tf.int32, shape=(batch_size), name="encoder_lens")
+        self.encoder_lens  = tf.placeholder(dtype=tf.int32, shape=(batch_size), name="encoder_lens")
 
         # include GO sent and EOS
-        self.decoder_lens = tf.placeholder(dtype=tf.int32, shape=batch_size, name="decoder_lens")
         self.learning_rate = tf.Variable(float(config.init_lr), trainable=False)
         self.learning_rate_decay_op = self.learning_rate.assign(self.learning_rate * config.lr_decay)
 
@@ -65,7 +64,7 @@ class Word2Seq(object):
                     cell_enc = rnn_cell.MultiRNNCell([cell_enc] * config.num_layer, state_is_tuple=True)
 
                 encoder_outputs, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding,
-                                                                      sequence_length=encoder_lens,
+                                                                      sequence_length=self.encoder_lens,
                                                         dtype=tf.float32)
                 if config.num_layer > 1:
                     encoder_last_state = encoder_last_state[-1]
@@ -159,15 +158,16 @@ class Word2Seq(object):
             batch = train_feed.next_batch()
             if batch is None:
                 break
-            encoder_len, encoder_x, decoder_y = batch
+            encoder_len, decoder_len, encoder_x, decoder_y = batch
 
-            fetches = [ self.mean_loss, self.merged]
+            fetches = [self.train_ops, self.mean_loss, self.merged]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
-            loss, summary = sess.run(fetches, feed_dict)
+            _, loss, summary = sess.run(fetches, feed_dict)
+            self.train_summary_writer.add_summary(summary, global_t)
             losses.append(loss)
             global_t += 1
             local_t += 1
-            total_word_num += np.sum(np.sign(decoder_y))  # since we remove GO for prediction
+            total_word_num += np.sum(decoder_len-1)  # since we remove GO for prediction
             if local_t % (train_feed.num_batch / 50) == 0:
                 train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
                 print("%.2f train loss %f perleixty %f" %
