@@ -32,6 +32,7 @@ class Config(object):
     num_layer = 1
     max_epoch = 1
     line_thres =2
+    decoder_size=15
 
     # SGD training related
     init_lr = 0.005
@@ -49,21 +50,26 @@ def main():
                         FLAGS.max_enc_len, FLAGS.max_dec_len, Config.line_thres)
     corpus_data = api.get_corpus()
 
+    #Load configuration
+    config = Config()
+    test_config = Config()
+    test_config.keep_prob = 1.0
+    test_config.batch_size = 20
+    pp(config)
+
+
+
     # convert to numeric input outputs that fits into TF models
-    train_feed = WordSeqDataFeed("Train", corpus_data["train"], api.vocab)
-    valid_feed = WordSeqDataFeed("Valid", corpus_data["valid"], api.vocab)
-    test_feed = WordSeqDataFeed("Test", corpus_data["test"], api.vocab)
+    train_feed = WordSeqDataFeed("Train", config,corpus_data["train"], api.vocab)
+    valid_feed = WordSeqDataFeed("Valid", config,corpus_data["valid"], api.vocab)
+    test_feed = WordSeqDataFeed("Test", config,corpus_data["test"], api.vocab)
 
     if not os.path.exists(FLAGS.work_dir):
         os.mkdir(FLAGS.work_dir)
 
     log_dir = os.path.join(FLAGS.work_dir, "run" + str(int(time.time())))
     os.mkdir(log_dir)
-    config = Config()
-    test_config = Config()
-    test_config.keep_prob = 1.0
-    test_config.batch_size = 20
-    pp(config)
+
 
     # begin training
     with tf.Session() as sess:

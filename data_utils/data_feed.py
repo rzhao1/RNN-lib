@@ -17,7 +17,7 @@ class WordSeqDataFeed(object):
     GO_ID = 2
     EOS_ID = 3
 
-    def __init__(self, name, data, vocab):
+    def __init__(self, name, config, data, vocab):
         self.name = name
         # plus 4 is because of the 4 built-in words PAD, UNK, GO and EOS
         self.vocab = {word: idx+4 for idx, word in enumerate(vocab)}
@@ -25,6 +25,7 @@ class WordSeqDataFeed(object):
         self.vocab["UNK_"] = self.UNK_ID
         self.vocab["GO_"] = self.GO_ID
         self.vocab["EOS_"] = self.EOS_ID
+        self.decoder_size=config.decoder_size
         # make sure we add 4 new special symbol
         assert len(self.vocab) == (len(vocab)+4)
 
@@ -48,23 +49,29 @@ class WordSeqDataFeed(object):
     def _shuffle(self):
         np.random.shuffle(self.batch_indexes)
 
-    def _prepare_batch(self, selected_index):
+    def _prepare_batch(self,selected_index):
         x_rows = [self.id_xs[idx] for idx in selected_index]
-        y_rows = [[self.PAD_ID] + self.id_ys[idx] + [self.EOS_ID] for idx in selected_index]
+        y_rows = [[self.PAD_ID] + self.id_ys[idx] for idx in selected_index]
         encoder_len = np.array([len(row) for row in x_rows], dtype=np.int32)
         decoder_len = np.array([len(row) for row in y_rows], dtype=np.int32)
 
         max_enc_len = np.max(encoder_len)
-        max_dec_len = np.max(decoder_len)
+        #Fixed-size decoder
+        max_dec_len = self.decoder_size
 
         encoder_x = np.zeros((self.batch_size, max_enc_len), dtype=np.int32)
         decoder_y = np.zeros((self.batch_size, max_dec_len), dtype=np.int32)
 
         for idx, (x, y) in enumerate(zip(x_rows, y_rows)):
             encoder_x[idx, 0:encoder_len[idx]] = x
-            decoder_y[idx, 0:decoder_len[idx]] = y
+            if(decoder_len[idx]>=max_dec_len):
+                decoder_y[idx, 0:max_dec_len-2] = y[0:max_dec_len-2]
+            else:
+                decoder_y[idx,0:decoder_len[idx]]=y
+                decoder_y[idx,decoder_len[idx]+1:max_dec_len-2]=0
 
-        return encoder_len, decoder_len, encoder_x, decoder_y
+            decoder_y[idx, max_dec_len - 1] = self.EOS_ID
+        return encoder_len, encoder_x, decoder_y
 
     def epoch_init(self, batch_size, shuffle=True):
         # create batch indexes for computation efficiency
