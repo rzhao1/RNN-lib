@@ -2,6 +2,7 @@ import os
 import time
 from beeprint import pp
 import numpy as np
+from numpy import newaxis
 from tensorflow.python.ops import nn_ops
 
 import tensorflow as tf
@@ -43,7 +44,7 @@ class seq2seq(object):
 
         return loop_function
 
-    def __init__(self, sess, config, vocab_size, log_dir,forward=False):
+    def __init__(self, sess, config, vocab_size, log_dir=None,forward=False):
         self.batch_size = batch_size = config.batch_size
         self.utt_cell_size = utt_cell_size = config.cell_size
         self.vocab_size = vocab_size
@@ -63,7 +64,7 @@ class seq2seq(object):
         # the decoder is in format GO sent EOS. Mostly we either work with GO sent or sent EOS.
         max_decode_sent_len_minus_one = max_decode_sent_len - 1
         with variable_scope.variable_scope("word-embedding"):
-            embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
+            self.embedding =embedding= tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
             encoder_embedding = embedding_ops.embedding_lookup(embedding,
                                                                tf.squeeze(tf.reshape(self.encoder_batch, [-1, 1]),
                                                                           squeeze_dims=[1]))
@@ -105,22 +106,22 @@ class seq2seq(object):
                 # No backpro and forward only for testing
                 if forward :
                     W = tf.get_variable('linear_W', [vocab_size, utt_cell_size], dtype=tf.float32)
-                    b = tf.get_variable('linear_b', [utt_cell_size], dtype=tf.float32,
-                                            initializer=tf.zeros_initializer)
+                    b = tf.get_variable('linear_b', [utt_cell_size], dtype=tf.float32)
                     output_projections=[W,b]
                     output, _ = tf.nn.seq2seq.attention_decoder(tf.unpack(decoder_embedding,num=config.decoder_size-1,axis=1), encoder_last_state,encoder_outputs,cell_dec, vocab_size,1 ,
                                                                 loop_function=self._extract_argmax_and_embed(embedding,output_projection=output_projections))
 
                     #logits_flat = tf.matmul(tf.reshape(output, [-1, utt_cell_size]), W) + b
-                    labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:max_decode_sent_len], [-1, 1]), squeeze_dims=[1])
+                 #   labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:max_decode_sent_len], [-1, 1]), squeeze_dims=[1])
                     logits_flat=tf.pack(output,2)
                     logits_flat = tf.reshape(output, [-1, vocab_size])
-                    weights = tf.to_float(tf.sign(labels_flat))
-                    self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
-                    self.losses *= weights
-                    self.mean_loss = tf.reduce_sum(self.losses) / tf.cast(batch_size, tf.float32)
-                    tf.scalar_summary('cross_entropy_loss', self.mean_loss)
-                    self.merged = tf.merge_all_summaries()
+                    self.debug_logits_flat=logits_flat
+                  #  weights = tf.to_float(tf.sign(labels_flat))
+                  #  self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
+                   # self.losses *= weights
+                   # self.mean_loss = tf.reduce_sum(self.losses) / tf.cast(batch_size, tf.float32)
+                   # tf.scalar_summary('cross_entropy_loss', self.mean_loss)
+                   # self.merged = tf.merge_all_summaries()
 
                 #Training with backpro
                 else:
@@ -136,13 +137,13 @@ class seq2seq(object):
                     # logits_flat = tf.matmul(tf.reshape(output, [-1, utt_cell_size]), W) + b
                     logits_flat=tf.pack(output,2)
                     logits_flat = tf.reshape(logits_flat, [-1, vocab_size])
-
+                    self.debug_logits_flat=logits_flat
                     labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:config.decoder_size], [-1, 1]), squeeze_dims=[1])
                     weights = tf.to_float(tf.sign(labels_flat))
                     self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
                     self.losses *= weights
-                    self.mean_loss = tf.reduce_sum(self.losses) / tf.cast(batch_size, tf.float32)
-                    tf.scalar_summary('cross_entropy_loss', self.mean_loss)
+                    self.losses = tf.reduce_sum(self.losses) / tf.cast(batch_size, tf.float32)
+                    tf.scalar_summary('cross_entropy_loss', self.losses)
                     self.merged = tf.merge_all_summaries()
 
                 # choose a optimizer
@@ -154,7 +155,7 @@ class seq2seq(object):
                         optim = tf.train.GradientDescentOptimizer(self.learning_rate)
 
                     tvars = tf.trainable_variables()
-                    grads, _ = tf.clip_by_global_norm(tf.gradients(self.mean_loss, tvars), config.grad_clip)
+                    grads, _ = tf.clip_by_global_norm(tf.gradients(self.losses, tvars), config.grad_clip)
                     self.train_ops = optim.apply_gradients(zip(grads, tvars))
                     self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V1)
 
@@ -186,9 +187,9 @@ class seq2seq(object):
                 break
             encoder_len, encoder_x, decoder_y = batch
 
-            fetches = [ self.mean_loss, self.merged]
+            fetches = [self.debug_logits_flat, self.losses, self.merged]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
-            loss, summary = sess.run(fetches, feed_dict)
+            logits,loss, summary = sess.run(fetches, feed_dict)
             losses.append(loss)
             global_t += 1
             local_t += 1
@@ -236,28 +237,56 @@ class seq2seq(object):
 
 
 
-    def rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None, scope=None):
-        """
-        Args:
-            decoder_inputs: A list of 2D Tensors [batch_size x input_size].
-            initial_state: batch * cell_size
-        """
-        with variable_scope.variable_scope(scope or "rnn_decoder"):
-            state = initial_state
-            outputs = []
-            prev = None
-            for i, inp in enumerate(decoder_inputs):
-                if loop_function is not None and prev is not None:
-                    with variable_scope.variable_scope("loop_function", reuse=True):
-                        inp = loop_function(prev, i)
-                if i > 0:
-                    variable_scope.get_variable_scope().reuse_variables()
-                output, state = cell(inp, state)
-                outputs.append(output)
-                if loop_function is not None:
-                    prev = output
-            if loop_function is not None and loop_function.func_name is "beam_search":
-                with variable_scope.variable_scope("loop_function", reuse=True):
-                    loop_function(prev, len(decoder_inputs))
 
-        return outputs, state
+
+    def get_predicted_sentence(self,input_sentence,vocab,train_feed,sess,model):
+
+        input_sent=train_feed.line_2_ids_util(input_sentence,vocab,train_feed.UNK_ID)
+        input_sent=np.expand_dims(input_sent,axis=0)
+
+        output_sent=np.array([train_feed.GO_ID] +  [train_feed.PAD_ID] * 13 + [train_feed.EOS_ID])
+        output_sent=np.expand_dims(output_sent,axis=0)
+        print(input_sent)
+       # embedding_input=embedding_ops.embedding_lookup(self.embedding,input_sent)
+       # embedding_output= embedding_ops.embedding_lookup(self.embedding,output_sent)
+        fetches=[self.debug_logits_flat]
+        feed_dict = {self.encoder_batch: input_sent, self.decoder_batch: output_sent, self.encoder_lens: np.array([len(input_sent)]),
+                     self.decoder_lens: np.array([len(output_sent)])}
+        #   list of 2d tensor[bath size*vocab_size]
+        output_logits_flat=sess.run(fetches,feed_dict)
+        output_logits_flat = output_logits_flat[0]
+        outputs=[]
+        #Greedy decoder extract the best one
+        for idx in range(14):
+            selected_token_id = int(np.argmax(output_logits_flat[idx, :]))
+            if selected_token_id ==train_feed.EOS_ID:
+                break
+            else:
+                outputs.append(selected_token_id)
+        rev_vocab = {v:k for k, v in vocab.items()}
+        output_sentence= " ".join([rev_vocab[output] for output in outputs])
+        print (output_sentence)
+        return output_sentence
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
