@@ -8,8 +8,8 @@ from data_utils.data_feed import UttSeqDataFeed
 from models.utt2seq import Utt2Seq
 
 # constants
-tf.app.flags.DEFINE_string("data_dir", "Data/ucsc_features", "the dir that has the raw corpus file")
-tf.app.flags.DEFINE_string("data_file", "combine_result.txt", "the file that contains the raw data")
+tf.app.flags.DEFINE_string("data_dir", "Data", "the dir that has the raw corpus file")
+tf.app.flags.DEFINE_string("data_file", "combine_result_orson.txt", "the file that contains the raw data")
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
@@ -24,12 +24,12 @@ FLAGS = tf.app.flags.FLAGS
 class Config(object):
     op = "adam"
     cell_type = "gru"
-    use_attention = True
+    use_attention = False
 
     # general config
     grad_clip = 5.0
     init_w = 0.05
-    batch_size = 10
+    batch_size = 20
     clause_embed_size = 300
     embed_size = 150
     cell_size = 500
@@ -72,7 +72,8 @@ def main():
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
-            model = Utt2Seq(sess, config, len(train_feed.vocab), train_feed.feat_size, train_feed.max_dec_size, log_dir, FLAGS.forward)
+            model = Utt2Seq(sess, config, vocab_size=len(train_feed.vocab), feature_size=train_feed.feat_size,
+                            max_decoder_size=train_feed.max_dec_size, log_dir=log_dir, forward=FLAGS.forward)
 
         with tf.variable_scope("model", reuse=True, initializer=initializer):
             test_model = Utt2Seq(sess, test_config, len(train_feed.vocab), train_feed.feat_size, train_feed.max_dec_size, None, FLAGS.forward)

@@ -23,7 +23,7 @@ class Utt2Seq(object):
 
         self.encoder_batch = tf.placeholder(dtype=tf.float32, shape=(None, None, feature_size), name="encoder_utts")
         self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, max_decoder_size), name="decoder_seq")
-        self.encoder_lens = encoder_lens = tf.placeholder(dtype=tf.int32, shape=(None), name="encoder_lens")
+        self.encoder_lens = tf.placeholder(dtype=tf.int32, shape=None, name="encoder_lens")
         # include GO sent and EOS
 
         self.learning_rate = tf.Variable(float(config.init_lr), trainable=False)
@@ -36,11 +36,12 @@ class Utt2Seq(object):
 
         with variable_scope.variable_scope("clause-embedding"):
             embed_w = tf.get_variable('embed_w', [feature_size, config.clause_embed_size], dtype=tf.float32)
-            embed_b = tf.get_variable('embed_b', [config.clause_embed_size], dtype=tf.float32, initializer=tf.zeros_initializer)
+            embed_b = tf.get_variable('embed_b', [config.clause_embed_size], dtype=tf.float32,
+                                      initializer=tf.zeros_initializer)
 
             encoder_embedding = tf.matmul(tf.reshape(self.encoder_batch, [-1, self.feature_size]), embed_w) + embed_b
             encoder_embedding = tf.tanh(encoder_embedding)
-            encoder_embedding = tf.reshape(encoder_embedding, [-1, max_encode_sent_len, config.embed_size])
+            encoder_embedding = tf.reshape(encoder_embedding, [-1, max_encode_sent_len, config.clause_embed_size])
 
         with variable_scope.variable_scope("word-embedding"):
             embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
@@ -66,8 +67,8 @@ class Utt2Seq(object):
                 if config.num_layer > 1:
                     cell_enc = rnn_cell.MultiRNNCell([cell_enc] * config.num_layer, state_is_tuple=True)
 
-                encoder_outputs, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding, sequence_length=encoder_lens,
-                                                        dtype=tf.float32)
+                encoder_outputs, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding, dtype=tf.float32,
+                                                                      sequence_length=self.encoder_lens)
                 if config.num_layer > 1:
                     encoder_last_state = encoder_last_state[-1]
 
@@ -191,7 +192,6 @@ class Utt2Seq(object):
             if batch is None:
                 break
             encoder_len, decoder_len, encoder_x, decoder_y = batch
-
             fetches = [self.train_ops, self.mean_loss, self.merged]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
             _, loss, summary = sess.run(fetches, feed_dict)
