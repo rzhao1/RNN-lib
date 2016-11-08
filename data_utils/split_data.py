@@ -123,7 +123,7 @@ class WordSeqCorpus(object):
             speakers.append("$$$")
             utterances.append("$$$")
             speakers.extend([l.split("|||")[0] for l in movies[key]])
-            utterances.extend([l.split("|||")[1] for l in movies[key]])
+            utterances.extend([" ".join(self.tokenizer(l.split("|||")[1])).lower() for l in movies[key]])
 
         total_size = len(utterances)
         train_size = int(total_size * split_size[0] / 10)
