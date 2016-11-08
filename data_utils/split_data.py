@@ -44,6 +44,9 @@ class WordSeqCorpus(object):
         # get vocabulary\
         self.vocab = self.get_vocab()
 
+        self.oov("VALID", self.valid_y)
+        self.oov("TEST", self.test_y)
+
         self.print_stats("TRAIN", self.train_x, self.train_y)
         self.print_stats("VALID", self.valid_x, self.valid_y)
         self.print_stats("TEST", self.test_x, self.test_y)
@@ -58,7 +61,23 @@ class WordSeqCorpus(object):
         vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
         vocab_cnt = sorted(vocab_cnt, reverse=True)
         vocab = [key for cnt, key in vocab_cnt]
+        cnts = [cnt for cnt, key in vocab_cnt]
+        total = np.sum(cnts)
+        valid = np.sum(cnts[0:self.max_vocab_size])
+        print("Raw vocab cnt %d with valid ratio %f" % (len(vocab), float(valid)/total))
+
         return vocab[0:self.max_vocab_size]
+
+    def oov(self, name, data):
+        oov_cnt = 0
+        total_cnt = 0
+        for line in data:
+            for tkn in line.split():
+                total_cnt += 1
+                if tkn not in self.vocab:
+                    oov_cnt += 1
+
+        print("%s oov %f" % (name, float(oov_cnt)/total_cnt))
 
     def clip_to_max_len(self, enc_data, dec_data):
         new_enc_data = [" ".join(x.split()[-self.max_enc_len:]) for x in enc_data]

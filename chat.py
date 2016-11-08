@@ -17,6 +17,7 @@ tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar len
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_string("max_enc_len", 100, "The largest number of words in encoder")
 tf.app.flags.DEFINE_string("max_dec_len", 50, "The largest number of words in decoder")
+tf.app.flags.DEFINE_string("model_dir","run1478582989","the model dir that we want to test")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -25,14 +26,14 @@ class Config(object):
     op = "sgd"
     cell_type = "gru"
 
-    use_attention = True
+    use_attention = False
 
     # general config
     grad_clip = 5.0
     init_w = 0.05
     batch_size = 1
     embed_size = 150
-    cell_size = 300
+    cell_size = 500
     num_layer = 1
     max_epoch = 1
     line_thres = 2
@@ -65,7 +66,8 @@ def chat():
         train_feed = WordSeqDataFeed("Train", config, corpus_data["train"], api.vocab)
 
        #Construct model
-        model = create_model(sess, config, len(train_feed.vocab),forward=True)
+        with tf.variable_scope("model", reuse=None):
+            model = create_model(sess, config, len(train_feed.vocab),forward=True)
 
         # Decode from standard input.
         sys.stdout.write("> ")
@@ -81,7 +83,10 @@ def chat():
 def create_model(sess, config, vocab_size, log_dir=None,forward=False):
 
     model= Word2Seq(sess, config, vocab_size,forward=True)
-    ckpt = tf.train.get_checkpoint_state(FLAGS.work_dir)
+
+    model_folder=os.path.join(FLAGS.work_dir,FLAGS.model_dir)
+    ckpt_dir=os.path.join(model_folder,"checkpoints")
+    ckpt = tf.train.get_checkpoint_state(ckpt_dir)
     if ckpt:
         print("Reading models parameters from %ss" % ckpt.model_checkpoint_path)
         model.saver.restore(sess, ckpt.model_checkpoint_path)

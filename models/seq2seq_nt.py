@@ -79,6 +79,7 @@ class Word2Seq(object):
                     raise ValueError("unknown cell type")
 
                 decoder_embedding_list = tf.unpack(decoder_embedding, num=max_decode_minus_one, axis=1)
+
                 # No back propagation and forward only for testing
                 if forward :
                     if config.use_attention:
@@ -91,15 +92,11 @@ class Word2Seq(object):
                                                                          output_size=vocab_size, num_heads=1,
                                                                          loop_function=self._extract_argmax_and_embed(embedding,output_projection=output_projections))
                     else:
-                        W = tf.get_variable('linear_W', [vocab_size, cell_size], dtype=tf.float32)
-                        b = tf.get_variable('linear_b', [cell_size], dtype=tf.float32)
-                        output_projections=[W,b]
-
                         cell_dec = tf.nn.rnn_cell.OutputProjectionWrapper(cell_dec, vocab_size)
                         dec_outputs, _ = tf.nn.seq2seq.rnn_decoder(decoder_embedding_list,
                                                                    initial_state=encoder_last_state,
                                                                    cell=cell_dec,
-                                                                   loop_function=self._extract_argmax_and_embed(embedding,output_projection=output_projections))
+                                                                   loop_function=self._extract_argmax_and_embed(embedding,output_projection=None))
                 # Training with back propagation
                 else:
                     if config.use_attention:
@@ -288,11 +285,12 @@ class Word2Seq(object):
         outputs=[]
         #Greedy decoder extract the best one
         for idx in range(14):
-            selected_token_id = int(np.argmax(output_logits_flat[idx, :]))
+            selected_token_id = int(np.argmax(output_logits_flat[idx, 4:]))
             if selected_token_id ==train_feed.EOS_ID:
-                break
+                continue
             else:
                 outputs.append(selected_token_id)
+        print outputs
         rev_vocab = {v:k for k, v in vocab.items()}
         output_sentence= " ".join([rev_vocab[output] for output in outputs])
         print (output_sentence)
