@@ -18,6 +18,7 @@ class WordSeqCorpus(object):
         :param split_size: size of training:valid:test
 
         """
+
         self._data_dir = data_dir
         self._data_name = data_name
         self._cache_dir = os.path.join(data_dir, "word_seq_split")
@@ -58,10 +59,26 @@ class WordSeqCorpus(object):
         vocab_cnt = sorted(vocab_cnt, reverse=True)
         vocab = [key for cnt, key in vocab_cnt]
         cnts = [cnt for cnt, key in vocab_cnt]
+        total = np.sum(cnts)
+        valid = np.sum(cnts[0:self.max_vocab_size])
+        print("Raw vocab cnt %d with valid ratio %f" % (len(vocab), float(valid)/total))
+
+        cnts = [cnt for cnt, key in vocab_cnt]
         total = float(np.sum(cnts))
         valid = float(np.sum(cnts[0:self.max_vocab_size]))
         print("Before cutting. Raw vocab size is %d with valid ratio %f" % (len(vocab), valid/total))
         return vocab[0:self.max_vocab_size]
+
+    def oov(self, name, data):
+        oov_cnt = 0
+        total_cnt = 0
+        for line in data:
+            for tkn in line.split():
+                total_cnt += 1
+                if tkn not in self.vocab:
+                    oov_cnt += 1
+
+        print("%s oov %f" % (name, float(oov_cnt)/total_cnt))
 
     def clip_to_max_len(self, enc_data, dec_data):
         new_enc_data = [" ".join(x.split()[-self.max_enc_len:]) for x in enc_data]
@@ -225,7 +242,6 @@ class UttCorpus(object):
         vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
         vocab_cnt = sorted(vocab_cnt, reverse=True)
         vocab = [key for cnt, key in vocab_cnt]
-        print("Before cutting. Raw vocab size is %d" % len(vocab))
         return vocab[0:max_vocab_size]
 
     def print_stats(self, name, data):

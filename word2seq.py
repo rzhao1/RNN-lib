@@ -34,6 +34,7 @@ class Config(object):
     cell_size = 500
     num_layer = 1
     max_epoch = 20
+
     line_thres =2
     max_decoder_size=15
 
