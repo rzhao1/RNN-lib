@@ -3,18 +3,18 @@ import time
 from beeprint import pp
 import numpy as np
 import tensorflow as tf
-from data_utils.split_data import WordSeqCorpus
+from data_utils.split_data import UttSeqCorpus
 from data_utils.data_feed import WordSeqDataFeed
 from models.seq2seq_nt import Word2Seq
 
 # constants
-tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
-tf.app.flags.DEFINE_string("data_file", "clean_data_ran.txt", "the file that contains the raw data")
+tf.app.flags.DEFINE_string("data_dir", "Data/ucsc_features", "the dir that has the raw corpus file")
+tf.app.flags.DEFINE_string("data_file", "combine_result.txt", "the file that contains the raw data")
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
-tf.app.flags.DEFINE_string("max_enc_len", 100, "The largest number of words in encoder")
-tf.app.flags.DEFINE_string("max_dec_len", 50, "The largest number of words in decoder")
+tf.app.flags.DEFINE_string("max_enc_len", 20, "The largest number of utterance in encoder")
+tf.app.flags.DEFINE_string("max_dec_len", 13, "The largest number of words in decoder")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
 FLAGS = tf.app.flags.FLAGS
 
@@ -31,7 +31,6 @@ class Config(object):
     cell_size = 1000
     num_layer = 1
     max_epoch = 20
-    line_thres =2
 
     # SGD training related
     init_lr = 0.005
@@ -45,9 +44,10 @@ class Config(object):
 
 def main():
     # load corpus
-    api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7,1,2], FLAGS.max_vocab_size,
-                        FLAGS.max_enc_len, FLAGS.max_dec_len, Config.line_thres)
+    api = UttSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7,1,2], FLAGS.max_vocab_size,
+                        FLAGS.max_enc_len, FLAGS.max_dec_len)
     corpus_data = api.get_corpus()
+    exit()
 
     # convert to numeric input outputs that fits into TF models
     train_feed = WordSeqDataFeed("Train", corpus_data["train"], api.vocab)

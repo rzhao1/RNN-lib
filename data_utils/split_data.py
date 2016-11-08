@@ -301,3 +301,143 @@ class UttCorpus(object):
         return {"train": self.train_data,
                 "valid": self.valid_data,
                 "test": self.test_data}
+
+
+class UttSeqCorpus(object):
+    train_x = None
+    train_y = None
+    valid_x = None
+    valid_y = None
+    test_x = None
+    test_y = None
+
+    # feature names
+    SPK_ID = 0
+    TEXT_ID = 1
+    DA_ID = 2
+    SENTI_ID = 3
+    OPINION_ID = 4
+    EMPATH_ID = 5
+    LIWC_ID = 6
+
+    def __init__(self, data_dir, data_name, split_size, max_vocab_size, max_enc_utt_len, max_dec_word_len):
+        """"
+        :param line_thres: how many line will be merged as encoding sentensce
+        :param split_size: size of training:valid:test
+
+        """
+
+        self._data_dir = data_dir
+        self._data_name = data_name
+        self._cache_dir = os.path.join(data_dir, "utt_seq_split")
+        if not os.path.exists(self._cache_dir):
+            os.mkdir(self._cache_dir)
+
+        self.split_size = split_size
+        self.max_vocab_size = max_vocab_size
+        self.max_enc_utt_len = max_enc_utt_len
+        self.max_dec_word_len = max_dec_word_len
+        with open(os.path.join(data_dir, data_name), "rb") as f:
+            self._parse_file(f.readlines(), split_size)
+
+        # clip train_y. Different word2seq, encoder don't need clipping, since it fixed history
+        self.train_y = self.clip_to_max_len(self.train_y)
+        self.valid_y = self.clip_to_max_len(self.valid_y)
+        self.test_y = self.clip_to_max_len(self.test_y)
+
+        # get vocabulary\
+        self.vocab = self.get_vocab()
+
+        self.print_stats("TRAIN", self.train_x, self.train_y)
+        self.print_stats("VALID", self.valid_x, self.valid_y)
+        self.print_stats("TEST", self.test_x, self.test_y)
+
+    def get_vocab(self):
+        # get vocabulary dictionary
+        vocab_cnt = {}
+        for spk, line in self.train_y:
+            for tkn in line.split():
+                cnt = vocab_cnt.get(tkn, 0)
+                vocab_cnt[tkn] = cnt + 1
+        vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
+        vocab_cnt = sorted(vocab_cnt, reverse=True)
+        vocab = [key for cnt, key in vocab_cnt]
+        return vocab[0:self.max_vocab_size]
+
+    def clip_to_max_len(self, dec_data):
+        new_dec_data = [(spk, " ".join(x.split()[0:self.max_dec_word_len])) for spk, x in dec_data]
+        return new_dec_data
+
+    def print_stats(self, name, enc_data, dec_data):
+        enc_lens = [len(x) for x in enc_data]
+        avg_len = float(np.mean(enc_lens))
+        max_len = float(np.max(enc_lens))
+        dec_lens = [len(x.split()) for spk, x in dec_data]
+        dec_avg_len = float(np.mean(dec_lens))
+        dec_max_len = float(np.max(dec_lens))
+        print ('%s encoder avg len %.2f max len %.2f of %d lines' % (name, avg_len, max_len, len(enc_data)))
+        print ('%s decoder avg len %.2f max len %.2f of %d lines' % (name, dec_avg_len, dec_max_len, len(dec_data)))
+
+    def _parse_file(self, lines, split_size):
+        """
+        :param lines: Each line is a line from the file
+        """
+        movies = {}
+        utt_features = []
+
+        current_movie = []
+        current_name = []
+        for line in lines:
+            if "FILE_NAME" in line:
+                if current_movie:
+                    movies[current_name] = current_movie
+                current_name = line.strip()
+                current_movie = []
+            else:
+                current_movie.append(line.strip())
+        if current_movie:
+            movies[current_name] = current_movie
+
+        # shuffle movie here.
+        shuffle_keys = movies.keys()
+        np.random.shuffle(shuffle_keys)
+        for key in shuffle_keys:
+            utt_features.append("$$$")
+            # we only add the line that have full 7 features
+            utt_features.extend([l.split("|||") for l in movies[key] if len(l.split("|||")) == 7])
+
+        total_size = len(utt_features)
+        train_size = int(total_size * split_size[0] / 10)
+        valid_size = int(total_size * split_size[1] / 10)
+
+        content_xs = []
+        content_ys = []
+        # Pointer for decoder input
+        print("Begin creating data")
+        cur_movie_start_idx = None
+        for idx, features in enumerate(utt_features):
+            # if we are at "a" in $$$ a b c, ignore the input
+            if features == "$$$":
+                cur_movie_start_idx = idx
+                continue
+            content_x = utt_features[max(cur_movie_start_idx+1, idx - self.max_enc_utt_len):idx]
+            if len(content_x) <= 0:
+                continue
+            content_xs.append(content_x)
+            content_ys.append((features[self.SPK_ID], features[self.TEXT_ID]))
+
+        # split the data
+        self.train_x = content_xs[0: train_size]
+        self.train_y = content_ys[0: train_size]
+        self.valid_x = content_xs[train_size: train_size + valid_size]
+        self.valid_y = content_ys[train_size: train_size + valid_size]
+        self.test_x = content_xs[train_size + valid_size:]
+        self.test_y = content_ys[train_size + valid_size:]
+
+    def get_corpus(self):
+        """
+        :return: the corpus in train/valid/test
+        """
+        return {"train": (self.train_x, self.train_y),
+                "valid": (self.valid_x, self.valid_y),
+                "test": (self.test_x, self.test_y)}
