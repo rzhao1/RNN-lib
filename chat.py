@@ -2,7 +2,7 @@ import sys
 import tensorflow as tf
 from data_utils.split_data import WordSeqCorpus
 from data_utils.data_feed import WordSeqDataFeed
-from models.seq2seq_nt import seq2seq
+from models.seq2seq_nt import Word2Seq
 
 
 # constants
@@ -18,22 +18,24 @@ FLAGS = tf.app.flags.FLAGS
 
 
 class Config(object):
-    op = "adam"
+    op = "sgd"
     cell_type = "gru"
+
+    use_attention = True
 
     # general config
     grad_clip = 5.0
     init_w = 0.05
     batch_size = 1
     embed_size = 150
-    cell_size = 1000
+    cell_size = 300
     num_layer = 1
     max_epoch = 1
     line_thres = 2
-    decoder_size = 15
+    max_decoder_size = 15
 
     # SGD training related
-    init_lr = 0.005
+    init_lr = 0.6
     lr_hold = 1
     lr_decay = 0.6
     keep_prob = 1.0
@@ -74,7 +76,7 @@ def chat():
 
 def create_model(sess, config, vocab_size, log_dir=None,forward=False):
 
-    model= seq2seq(sess, config, vocab_size,forward=True)
+    model= Word2Seq(sess, config, vocab_size,forward=True)
     ckpt = tf.train.get_checkpoint_state(FLAGS.work_dir)
     if ckpt:
         print("Reading models parameters from %ss" % ckpt.model_checkpoint_path)
