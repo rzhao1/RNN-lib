@@ -259,11 +259,11 @@ class UttSeqDataFeed(object):
             self.id_ys.append(y)
 
         all_lens = [len(line) for line in self.feat_xs]
-        self.max_dec_size = np.max([len(line) for line in self.id_ys])
+        self.max_dec_size = np.max([len(line) for line in self.id_ys]) + 1
         self.indexes = list(np.argsort(all_lens))
         self.data_size = len(self.feat_xs)
         self.feat_size = len(self.vocab) + 1
-        print("%s feed loads %d samples" % (name, self.data_size))
+        print("%s feed loads %d samples with max decoder size %d" % (name, self.data_size, self.max_dec_size))
 
     def line_2_ids_and_vec(self, x_line, y_line):
         # x will be a list of vectors. Each vector has self.feat_size

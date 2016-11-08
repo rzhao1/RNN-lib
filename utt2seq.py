@@ -16,17 +16,20 @@ tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use
 tf.app.flags.DEFINE_string("max_enc_len", 5, "The largest number of utterance in encoder")
 tf.app.flags.DEFINE_string("max_dec_len", 13, "The largest number of words in decoder")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
+tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
+
 FLAGS = tf.app.flags.FLAGS
 
 
 class Config(object):
     op = "adam"
     cell_type = "gru"
+    use_attention = True
 
     # general config
     grad_clip = 5.0
     init_w = 0.05
-    batch_size = 50
+    batch_size = 10
     clause_embed_size = 300
     embed_size = 150
     cell_size = 500
@@ -69,10 +72,10 @@ def main():
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
-            model = Utt2Seq(sess, config, len(train_feed.vocab), train_feed.feat_size, log_dir)
+            model = Utt2Seq(sess, config, len(train_feed.vocab), train_feed.feat_size, train_feed.max_dec_size, log_dir, FLAGS.forward)
 
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = Utt2Seq(sess, test_config, len(train_feed.vocab), train_feed.feat_size, None)
+            test_model = Utt2Seq(sess, test_config, len(train_feed.vocab), train_feed.feat_size, train_feed.max_dec_size, None, FLAGS.forward)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
