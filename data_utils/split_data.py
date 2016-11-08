@@ -57,6 +57,10 @@ class WordSeqCorpus(object):
         vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
         vocab_cnt = sorted(vocab_cnt, reverse=True)
         vocab = [key for cnt, key in vocab_cnt]
+        cnts = [cnt for cnt, key in vocab_cnt]
+        total = np.sum(cnts)
+        valid = np.sum(cnts[0:self.max_vocab_size])
+        print("Before cutting. Raw vocab size is %d with valid ratio %f" % (len(vocab), valid/float(total)))
         return vocab[0:self.max_vocab_size]
 
     def clip_to_max_len(self, enc_data, dec_data):
@@ -102,7 +106,7 @@ class WordSeqCorpus(object):
             speakers.append("$$$")
             utterances.append("$$$")
             speakers.extend([l.split("|||")[0] for l in movies[key]])
-            utterances.extend([" ".join(self.tokenizer(l.split("|||")[1])) for l in movies[key]])
+            utterances.extend([" ".join(self.tokenizer(l.split("|||")[1])).lower() for l in movies[key]])
 
         total_size = len(utterances)
         train_size = int(total_size * split_size[0] / 10)
@@ -221,6 +225,7 @@ class UttCorpus(object):
         vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
         vocab_cnt = sorted(vocab_cnt, reverse=True)
         vocab = [key for cnt, key in vocab_cnt]
+        print("Before cutting. Raw vocab size is %d" % len(vocab))
         return vocab[0:max_vocab_size]
 
     def print_stats(self, name, data):
