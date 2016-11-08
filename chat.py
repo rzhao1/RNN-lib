@@ -3,7 +3,7 @@ import tensorflow as tf
 from data_utils.split_data import WordSeqCorpus
 from data_utils.data_feed import WordSeqDataFeed
 from models.seq2seq_nt import Word2Seq
-
+import os
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
@@ -12,27 +12,28 @@ tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results direc
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_string("max_enc_len", 100, "The largest number of words in encoder")
-tf.app.flags.DEFINE_string("max_dec_len", 50, "The largest number of words in decoder")
+tf.app.flags.DEFINE_integer("max_dec_len", 50, "The largest number of words in decoder")
+tf.app.flags.DEFINE_string("model_dir", "run1478613542", "The largest number of words in decoder")
+
 
 FLAGS = tf.app.flags.FLAGS
 
 
 class Config(object):
     op = "sgd"
-    cell_type = "gru"
-
-    use_attention = True
+    cell_type = "lstm"
+    use_attention = False
 
     # general config
     grad_clip = 5.0
     init_w = 0.05
-    batch_size = 1
+    batch_size = 30
     embed_size = 150
-    cell_size = 300
-    num_layer = 1
-    max_epoch = 1
-    line_thres = 2
-    max_decoder_size = 15
+    cell_size = 500
+    num_layer = 2
+    max_epoch = 3
+    line_thres =2
+    max_decoder_size=15
 
     # SGD training related
     init_lr = 0.6
@@ -54,6 +55,7 @@ def chat():
 
 
         config = Config()
+        config.batch_size = 1
         # load corpus
         api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7, 1, 2], FLAGS.max_vocab_size,
                             FLAGS.max_enc_len, FLAGS.max_dec_len, Config.line_thres)
@@ -61,7 +63,14 @@ def chat():
         train_feed = WordSeqDataFeed("Train", config, corpus_data["train"], api.vocab)
 
        #Construct model
-        model = create_model(sess, config, len(train_feed.vocab),forward=True)
+        with tf.variable_scope("model", reuse=None):
+            model = create_model(sess, config, len(train_feed.vocab),forward=True)
+
+        ckp_dir = os.path.join(os.path.join(FLAGS.work_dir, FLAGS.model_dir), "checkpoints")
+        ckpt = tf.train.get_checkpoint_state(ckp_dir)
+        if ckpt:
+            print("Reading models parameters from %s" % ckpt.model_checkpoint_path)
+            model.saver.restore(sess, ckpt.model_checkpoint_path)
 
         # Decode from standard input.
         sys.stdout.write("> ")
