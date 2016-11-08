@@ -367,6 +367,10 @@ class UttSeqCorpus(object):
         vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
         vocab_cnt = sorted(vocab_cnt, reverse=True)
         vocab = [key for cnt, key in vocab_cnt]
+        cnts = [cnt for cnt, key in vocab_cnt]
+        total = float(np.sum(cnts))
+        valid = float(np.sum(cnts[0:self.max_vocab_size]))
+        print("Before cutting. Raw vocab size is %d with valid ratio %f" % (len(vocab), valid / total))
         return vocab[0:self.max_vocab_size]
 
     def clip_to_max_len(self, dec_data):

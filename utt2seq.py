@@ -6,6 +6,7 @@ import tensorflow as tf
 from data_utils.split_data import UttSeqCorpus
 from data_utils.data_feed import UttSeqDataFeed
 from models.utt2seq import Utt2Seq
+from config_utils import Utt2SeqConfig
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data", "the dir that has the raw corpus file")
@@ -19,31 +20,6 @@ tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
 tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
 
 FLAGS = tf.app.flags.FLAGS
-
-
-class Config(object):
-    op = "adam"
-    cell_type = "gru"
-    use_attention = False
-
-    # general config
-    grad_clip = 5.0
-    init_w = 0.05
-    batch_size = 20
-    clause_embed_size = 300
-    embed_size = 150
-    cell_size = 500
-    num_layer = 1
-    max_epoch = 20
-
-    # SGD training related
-    init_lr = 0.005
-    lr_hold = 1
-    lr_decay = 0.6
-    keep_prob = 1.0
-    improve_threshold = 0.996
-    patient_increase = 2.0
-    early_stop = True
 
 
 def main():
@@ -62,10 +38,17 @@ def main():
 
     log_dir = os.path.join(FLAGS.work_dir, "run" + str(int(time.time())))
     os.mkdir(log_dir)
-    config = Config()
-    test_config = Config()
+    config = Utt2SeqConfig()
+
+    # for perplexity evaluation
+    valid_config = Utt2SeqConfig()
+    valid_config.keep_prob = 1.0
+    valid_config.batch_size = 200
+
+    # for forward only decoding
+    test_config = Utt2SeqConfig()
     test_config.keep_prob = 1.0
-    test_config.batch_size = 200
+    test_config.batch_size = 5
     pp(config)
 
     # begin training
@@ -73,10 +56,16 @@ def main():
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
             model = Utt2Seq(sess, config, vocab_size=len(train_feed.vocab), feature_size=train_feed.feat_size,
-                            max_decoder_size=train_feed.max_dec_size, log_dir=log_dir, forward=FLAGS.forward)
+                            max_decoder_size=train_feed.max_dec_size, log_dir=log_dir, forward=False)
 
+        # for evaluation perplexity on VALID and TEST set
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = Utt2Seq(sess, test_config, len(train_feed.vocab), train_feed.feat_size, train_feed.max_dec_size, None, FLAGS.forward)
+            valid_model = Utt2Seq(sess, valid_config, len(train_feed.vocab), train_feed.feat_size,
+                                  train_feed.max_dec_size, None, False)
+        # get a random batch and do forward decoding. Print the most likely response
+        with tf.variable_scope("model", reuse=True, initializer=initializer):
+            test_model = Utt2Seq(sess, valid_config, len(train_feed.vocab), train_feed.feat_size,
+                                  train_feed.max_dec_size, None, True)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
@@ -105,11 +94,11 @@ def main():
             global_t, train_loss = model.train(global_t, sess, train_feed)
 
             # begin validation
-            valid_feed.epoch_init(test_config.batch_size, shuffle=False)
-            valid_loss = test_model.valid("VALID", sess, valid_feed)
+            valid_feed.epoch_init(valid_config.batch_size, shuffle=False)
+            valid_loss = valid_model.valid("VALID", sess, valid_feed)
 
-            test_feed.epoch_init(test_config.batch_size, shuffle=False)
-            test_model.valid("TEST", sess, test_feed)
+            test_feed.epoch_init(valid_config.batch_size, shuffle=False)
+            valid_model.valid("TEST", sess, test_feed)
 
             done_epoch = epoch +1
 
