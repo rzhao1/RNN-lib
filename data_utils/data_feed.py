@@ -46,6 +46,9 @@ class WordSeqDataFeed(object):
     def line_2_ids(self, line):
         return [self.vocab.get(word, self.UNK_ID) for word in line.split()]
 
+    def line_2_ids_util(self,line,vocab,default):
+        return [vocab.get(word, default) for word in line.split()]
+
     def _shuffle(self):
         np.random.shuffle(self.batch_indexes)
 
