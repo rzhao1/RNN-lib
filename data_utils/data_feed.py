@@ -25,7 +25,7 @@ class WordSeqDataFeed(object):
         self.vocab["UNK_"] = self.UNK_ID
         self.vocab["GO_"] = self.GO_ID
         self.vocab["EOS_"] = self.EOS_ID
-        self.decoder_size=config.decoder_size
+        self.max_decoder_size = config.max_decoder_size
         # make sure we add 4 new special symbol
         assert len(self.vocab) == (len(vocab)+4)
 
@@ -54,27 +54,27 @@ class WordSeqDataFeed(object):
 
     def _prepare_batch(self,selected_index):
         x_rows = [self.id_xs[idx] for idx in selected_index]
-        y_rows = [[self.PAD_ID] + self.id_ys[idx] for idx in selected_index]
+        y_rows = [[self.GO_ID] + self.id_ys[idx] for idx in selected_index]
         encoder_len = np.array([len(row) for row in x_rows], dtype=np.int32)
         decoder_len = np.array([len(row) for row in y_rows], dtype=np.int32)
 
         max_enc_len = np.max(encoder_len)
-        #Fixed-size decoder
-        max_dec_len = self.decoder_size
+        max_dec_len = self.max_decoder_size
 
         encoder_x = np.zeros((self.batch_size, max_enc_len), dtype=np.int32)
         decoder_y = np.zeros((self.batch_size, max_dec_len), dtype=np.int32)
 
         for idx, (x, y) in enumerate(zip(x_rows, y_rows)):
             encoder_x[idx, 0:encoder_len[idx]] = x
-            if(decoder_len[idx]>=max_dec_len):
-                decoder_y[idx, 0:max_dec_len-2] = y[0:max_dec_len-2]
+            # we discard words that are longer than max_dec_len-2
+            if decoder_len[idx] >= max_dec_len:
+                decoder_y[idx, :] = y[0:max_dec_len-1] + [self.EOS_ID]
+                decoder_len[idx] = max_dec_len
             else:
-                decoder_y[idx,0:decoder_len[idx]]=y
-                decoder_y[idx,decoder_len[idx]+1:max_dec_len-2]=0
+                decoder_y[idx, 0: decoder_len[idx]+1] = y + [self.EOS_ID]
+                decoder_len[idx] += 1 # include the new EOS
 
-            decoder_y[idx, max_dec_len - 1] = self.EOS_ID
-        return encoder_len, encoder_x, decoder_y
+        return encoder_len, decoder_len, encoder_x, decoder_y
 
     def epoch_init(self, batch_size, shuffle=True):
         # create batch indexes for computation efficiency

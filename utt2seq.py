@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 from data_utils.split_data import WordSeqCorpus
 from data_utils.data_feed import WordSeqDataFeed
-from models.seq2seq_nt import seq2seq
+from models.seq2seq_nt import Word2Seq
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
@@ -69,10 +69,10 @@ def main():
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
-            model = seq2seq(sess, config, len(train_feed.vocab), log_dir)
+            model = Word2Seq(sess, config, len(train_feed.vocab), log_dir)
 
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = seq2seq(sess, test_config, len(train_feed.vocab), None)
+            test_model = Word2Seq(sess, test_config, len(train_feed.vocab), None)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
