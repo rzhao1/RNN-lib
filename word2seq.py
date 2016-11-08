@@ -25,16 +25,16 @@ class Config(object):
     op = "sgd"
     cell_type = "gru"
 
-    use_attention = True
+    use_attention = False
 
     # general config
     grad_clip = 5.0
     init_w = 0.05
     batch_size = 30
     embed_size = 150
-    cell_size = 1000
+    cell_size = 500
     num_layer = 1
-    max_epoch = 1
+    max_epoch = 20
     line_thres =2
     max_decoder_size=15
 
