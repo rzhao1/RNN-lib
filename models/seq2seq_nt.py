@@ -14,7 +14,7 @@ from tensorflow.python.ops import embedding_ops
 from tensorflow.python.ops import variable_scope
 
 
-class seq2seq(object):
+class Word2Seq(object):
     def _extract_argmax_and_embed(self,embedding, output_projection=None,
                                   update_embedding=False):
         """Get a loop_function that extracts the previous symbol and embeds it.

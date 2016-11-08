@@ -1,8 +1,4 @@
-import os
 import sys
-import time
-from beeprint import pp
-import numpy as np
 import tensorflow as tf
 from data_utils.split_data import WordSeqCorpus
 from data_utils.data_feed import WordSeqDataFeed

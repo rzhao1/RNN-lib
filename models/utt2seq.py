@@ -13,7 +13,7 @@ from tensorflow.python.ops import embedding_ops
 from tensorflow.python.ops import variable_scope
 
 
-class utt2seq(object):
+class Utt2Seq(object):
     def __init__(self, sess, config, vocab_size, feature_size, log_dir):
         self.batch_size = batch_size = config.batch_size
         self.utt_cell_size = utt_cell_size = config.cell_size

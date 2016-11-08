@@ -4,8 +4,8 @@ from beeprint import pp
 import numpy as np
 import tensorflow as tf
 from data_utils.split_data import UttSeqCorpus
-from data_utils.data_feed import WordSeqDataFeed
-from models.seq2seq_nt import Word2Seq
+from data_utils.data_feed import UttSeqDataFeed
+from models.utt2seq import Utt2Seq
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data/ucsc_features", "the dir that has the raw corpus file")
@@ -47,12 +47,11 @@ def main():
     api = UttSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7,1,2], FLAGS.max_vocab_size,
                         FLAGS.max_enc_len, FLAGS.max_dec_len)
     corpus_data = api.get_corpus()
-    exit()
 
     # convert to numeric input outputs that fits into TF models
-    train_feed = WordSeqDataFeed("Train", corpus_data["train"], api.vocab)
-    valid_feed = WordSeqDataFeed("Valid", corpus_data["valid"], api.vocab)
-    test_feed = WordSeqDataFeed("Test", corpus_data["test"], api.vocab)
+    train_feed = UttSeqDataFeed("Train", corpus_data["train"], api.vocab)
+    valid_feed = UttSeqDataFeed("Valid", corpus_data["valid"], api.vocab)
+    test_feed = UttSeqDataFeed("Test", corpus_data["test"], api.vocab)
 
     if not os.path.exists(FLAGS.work_dir):
         os.mkdir(FLAGS.work_dir)
@@ -69,10 +68,10 @@ def main():
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
-            model = Word2Seq(sess, config, len(train_feed.vocab), log_dir)
+            model = Utt2Seq(sess, config, len(train_feed.vocab), log_dir)
 
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = Word2Seq(sess, test_config, len(train_feed.vocab), None)
+            test_model = Utt2Seq(sess, test_config, len(train_feed.vocab), None)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
