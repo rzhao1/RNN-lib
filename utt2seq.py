@@ -13,7 +13,7 @@ tf.app.flags.DEFINE_string("data_file", "combine_result.txt", "the file that con
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
-tf.app.flags.DEFINE_string("max_enc_len", 20, "The largest number of utterance in encoder")
+tf.app.flags.DEFINE_string("max_enc_len", 5, "The largest number of utterance in encoder")
 tf.app.flags.DEFINE_string("max_dec_len", 13, "The largest number of words in decoder")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
 FLAGS = tf.app.flags.FLAGS
@@ -27,8 +27,9 @@ class Config(object):
     grad_clip = 5.0
     init_w = 0.05
     batch_size = 50
+    clause_embed_size = 300
     embed_size = 150
-    cell_size = 1000
+    cell_size = 500
     num_layer = 1
     max_epoch = 20
 
@@ -45,7 +46,7 @@ class Config(object):
 def main():
     # load corpus
     api = UttSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7,1,2], FLAGS.max_vocab_size,
-                        FLAGS.max_enc_len, FLAGS.max_dec_len)
+                       FLAGS.max_enc_len, FLAGS.max_dec_len)
     corpus_data = api.get_corpus()
 
     # convert to numeric input outputs that fits into TF models
@@ -68,10 +69,10 @@ def main():
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
-            model = Utt2Seq(sess, config, len(train_feed.vocab), log_dir)
+            model = Utt2Seq(sess, config, len(train_feed.vocab), train_feed.feat_size, log_dir)
 
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = Utt2Seq(sess, test_config, len(train_feed.vocab), None)
+            test_model = Utt2Seq(sess, test_config, len(train_feed.vocab), train_feed.feat_size, None)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
@@ -79,7 +80,7 @@ def main():
         patience = 10  # wait for at least 10 epoch before consider early stop
         valid_loss_threshold = np.inf
         best_valid_loss = np.inf
-        checkpoint_path = os.path.join(ckp_dir, "word2seq.ckpt")
+        checkpoint_path = os.path.join(ckp_dir, "utt2seq.ckpt")
 
         if not os.path.exists(ckp_dir):
             os.mkdir(ckp_dir)

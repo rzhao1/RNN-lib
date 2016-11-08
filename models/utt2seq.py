@@ -19,7 +19,7 @@ class Utt2Seq(object):
         self.utt_cell_size = utt_cell_size = config.cell_size
         self.vocab_size = vocab_size
         self.feature_size = feature_size
-        self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None, feature_size), name="encoder_utts")
+        self.encoder_batch = tf.placeholder(dtype=tf.float32, shape=(None, None, feature_size), name="encoder_utts")
         self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="decoder_seq")
         self.encoder_lens = encoder_lens = tf.placeholder(dtype=tf.int32, shape=(None), name="encoder_lens")
         # include GO sent and EOS
@@ -129,6 +129,7 @@ class Utt2Seq(object):
         losses = []
         local_t = 0
         total_word_num = 0
+        start_time = time.time()
         while True:
             batch = train_feed.next_batch()
             if batch is None:
@@ -142,13 +143,15 @@ class Utt2Seq(object):
             losses.append(loss)
             global_t += 1
             local_t += 1
-            total_word_num += np.sum(decoder_len-1)  # since we remove GO for prediction
+            total_word_num += np.sum(decoder_len-np.array(1))  # since we remove GO for prediction
             if local_t % (train_feed.num_batch / 50) == 0:
                 train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
                 print("%.2f train loss %f perplexity %f" %
                       (local_t / float(train_feed.num_batch), float(train_loss), np.exp(train_loss)))
+        end_time = time.time()
         train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
-        print("Train loss %f perplexity %f" % (float(train_loss), np.exp(train_loss)))
+        print("Train loss %f perplexity %f and step %f"
+              % (float(train_loss), np.exp(train_loss), (end_time-start_time)/float(local_t)))
 
         return global_t, train_loss
 

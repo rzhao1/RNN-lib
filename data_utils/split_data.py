@@ -18,7 +18,6 @@ class WordSeqCorpus(object):
         :param split_size: size of training:valid:test
 
         """
-
         self._data_dir = data_dir
         self._data_name = data_name
         self._cache_dir = os.path.join(data_dir, "word_seq_split")
@@ -103,7 +102,7 @@ class WordSeqCorpus(object):
             speakers.append("$$$")
             utterances.append("$$$")
             speakers.extend([l.split("|||")[0] for l in movies[key]])
-            utterances.extend([l.split("|||")[1] for l in movies[key]])
+            utterances.extend([" ".join(self.tokenizer(l.split("|||")[1])) for l in movies[key]])
 
         total_size = len(utterances)
         train_size = int(total_size * split_size[0] / 10)
@@ -333,6 +332,7 @@ class UttSeqCorpus(object):
         if not os.path.exists(self._cache_dir):
             os.mkdir(self._cache_dir)
 
+        self.tokenizer = WordPunctTokenizer().tokenize
         self.split_size = split_size
         self.max_vocab_size = max_vocab_size
         self.max_enc_utt_len = max_enc_utt_len
@@ -356,7 +356,7 @@ class UttSeqCorpus(object):
         # get vocabulary dictionary
         vocab_cnt = {}
         for spk, line in self.train_y:
-            for tkn in line.split():
+            for tkn in line:
                 cnt = vocab_cnt.get(tkn, 0)
                 vocab_cnt[tkn] = cnt + 1
         vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
@@ -365,14 +365,14 @@ class UttSeqCorpus(object):
         return vocab[0:self.max_vocab_size]
 
     def clip_to_max_len(self, dec_data):
-        new_dec_data = [(spk, " ".join(x.split()[0:self.max_dec_word_len])) for spk, x in dec_data]
+        new_dec_data = [(spk, x[0:self.max_dec_word_len]) for spk, x in dec_data]
         return new_dec_data
 
     def print_stats(self, name, enc_data, dec_data):
         enc_lens = [len(x) for x in enc_data]
         avg_len = float(np.mean(enc_lens))
         max_len = float(np.max(enc_lens))
-        dec_lens = [len(x.split()) for spk, x in dec_data]
+        dec_lens = [len(x) for spk, x in dec_data]
         dec_avg_len = float(np.mean(dec_lens))
         dec_max_len = float(np.max(dec_lens))
         print ('%s encoder avg len %.2f max len %.2f of %d lines' % (name, avg_len, max_len, len(enc_data)))
@@ -405,6 +405,11 @@ class UttSeqCorpus(object):
             utt_features.append("$$$")
             # we only add the line that have full 7 features
             utt_features.extend([l.split("|||") for l in movies[key] if len(l.split("|||")) == 7])
+
+        # tokenize the utterance text
+        for feature in utt_features:
+            if feature != "$$$":
+                feature[self.TEXT_ID] = self.tokenizer(feature[self.TEXT_ID])
 
         total_size = len(utt_features)
         train_size = int(total_size * split_size[0] / 10)

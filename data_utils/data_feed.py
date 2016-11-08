@@ -208,6 +208,7 @@ class UttDataFeed(object):
         else:
             return None
 
+
 # used by utt 2 seq
 class UttSeqDataFeed(object):
     # iteration related
@@ -222,8 +223,10 @@ class UttSeqDataFeed(object):
     batch_indexes = None
     PAD_ID = 0
     UNK_ID = 1
-    GO_ID = 2
-    EOS_ID = 3
+    GO_ID = 2 # start a new turn
+    CONTINUE_ID = 3 # continue (no conversation floor change)
+    EOS_ID = 4
+    vocab_offset = len([PAD_ID, UNK_ID, GO_ID, CONTINUE_ID, EOS_ID])
 
     # feature names
     SPK_ID = 0
@@ -237,48 +240,77 @@ class UttSeqDataFeed(object):
     def __init__(self, name, data, vocab):
         self.name = name
         # plus 4 is because of the 4 built-in words PAD, UNK, GO and EOS
-        self.vocab = {word: idx+4 for idx, word in enumerate(vocab)}
+        self.vocab = {word: idx+self.vocab_offset for idx, word in enumerate(vocab)}
         self.vocab["PAD_"] = self.PAD_ID
         self.vocab["UNK_"] = self.UNK_ID
         self.vocab["GO_"] = self.GO_ID
+        self.vocab["CONTINUE_"] = self.CONTINUE_ID
         self.vocab["EOS_"] = self.EOS_ID
-        # make sure we add 4 new special symbol
-        assert len(self.vocab) == (len(vocab)+4)
+        # make sure we add 5 new special symbol
+        assert len(self.vocab) == (len(vocab)+5)
 
         data_x, data_y = data
 
         # convert data into ids
-        self.id_xs, self.id_ys = [], []
-        for line in data_x:
-            self.id_xs.append(self.line_2_ids(line))
-        for line in data_y:
-            self.id_ys.append(self.line_2_ids(line))
+        self.feat_xs, self.id_ys = [], []
+        for x_line, y_line in zip(data_x, data_y):
+            x, y = self.line_2_ids_and_vec(x_line, y_line)
+            self.feat_xs.append(x)
+            self.id_ys.append(y)
 
-        all_lens = [len(line) for line in self.id_xs]
+        all_lens = [len(line) for line in self.feat_xs]
+        self.max_dec_size = np.max([len(line) for line in self.id_ys])
         self.indexes = list(np.argsort(all_lens))
-        self.data_size = len(self.id_xs)
+        self.data_size = len(self.feat_xs)
+        self.feat_size = len(self.vocab) + 1
         print("%s feed loads %d samples" % (name, self.data_size))
 
-    def line_2_ids(self, line):
-        return [self.vocab.get(word, self.UNK_ID) for word in line.split()]
+    def line_2_ids_and_vec(self, x_line, y_line):
+        # x will be a list of vectors. Each vector has self.feat_size
+        # y will a  list of int (ids). Each ID is the word index.
+        #  It will also decide the turn taking part, that is the first character is GO_ or CONTINUE_
+        y_speaker, y_text = y_line
+        x = []
+        last_speaker = None
+        for x_feat in x_line:
+            bow = {}
+            # get bag of words first
+            for w in x_feat[self.TEXT_ID]:
+                bow[self.vocab.get(w, self.UNK_ID)] = bow.get(self.vocab.get(w, self.UNK_ID), 0) + 1
+            # get if speaker is different from the decoding speaker
+            last_speaker = x_feat[self.SPK_ID]
+            same_speaker = 1 if last_speaker != y_speaker else 0
+            x.append((bow, same_speaker))
+
+        y = [self.vocab.get(word, self.UNK_ID) for word in y_text]
+        if last_speaker != y_speaker:
+            y = [self.GO_ID] + y
+        else:
+            y = [self.CONTINUE_ID] + y
+
+        return x, y
 
     def _shuffle(self):
         np.random.shuffle(self.batch_indexes)
 
     def _prepare_batch(self,selected_index):
-        x_rows = [self.id_xs[idx] for idx in selected_index]
-        y_rows = [[self.GO_ID] + self.id_ys[idx] for idx in selected_index]
+        x_rows = [self.feat_xs[idx] for idx in selected_index]
+        y_rows = [self.id_ys[idx] for idx in selected_index]
         encoder_len = np.array([len(row) for row in x_rows], dtype=np.int32)
         decoder_len = np.array([len(row) for row in y_rows], dtype=np.int32)
 
         max_enc_len = np.max(encoder_len)
-        max_dec_len = self.max_decoder_size
+        max_dec_len = self.max_dec_size
 
-        encoder_x = np.zeros((self.batch_size, max_enc_len), dtype=np.int32)
+        encoder_x = np.zeros((self.batch_size, max_enc_len, self.feat_size), dtype=np.float32)
         decoder_y = np.zeros((self.batch_size, max_dec_len), dtype=np.int32)
 
         for idx, (x, y) in enumerate(zip(x_rows, y_rows)):
-            encoder_x[idx, 0:encoder_len[idx]] = x
+            for t_id, (utt, floor) in enumerate(x):
+                for w_id, cnt in utt.items():
+                    encoder_x[idx, t_id, w_id] = cnt
+                encoder_x[idx, t_id, -1] = floor
+
             # we discard words that are longer than max_dec_len-2
             if decoder_len[idx] >= max_dec_len:
                 decoder_y[idx, :] = y[0:max_dec_len-1] + [self.EOS_ID]
