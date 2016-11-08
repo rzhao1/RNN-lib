@@ -14,8 +14,8 @@ tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results direc
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_string("max_enc_len", 50, "The largest number of words in encoder")
-tf.app.flags.DEFINE_string("max_dec_len", 50, "The largest number of words in decoder")
-tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
+tf.app.flags.DEFINE_string("max_dec_len", 13, "The largest number of words in decoder")
+tf.app.flags.DEFINE_bool("save_model", False, "Create checkpoints")
 tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
 
 FLAGS = tf.app.flags.FLAGS
@@ -24,8 +24,7 @@ FLAGS = tf.app.flags.FLAGS
 class Config(object):
     op = "sgd"
     cell_type = "gru"
-
-    use_attention = False
+    use_attention = True
 
     # general config
     grad_clip = 5.0

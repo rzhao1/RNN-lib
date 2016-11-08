@@ -3,35 +3,38 @@ import time
 from beeprint import pp
 import numpy as np
 import tensorflow as tf
-from data_utils.split_data import WordSeqCorpus
-from data_utils.data_feed import WordSeqDataFeed
-from models.seq2seq_nt import Word2Seq
+from data_utils.split_data import UttSeqCorpus
+from data_utils.data_feed import UttSeqDataFeed
+from models.utt2seq import Utt2Seq
 
 # constants
-tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
-tf.app.flags.DEFINE_string("data_file", "clean_data_ran.txt", "the file that contains the raw data")
+tf.app.flags.DEFINE_string("data_dir", "Data", "the dir that has the raw corpus file")
+tf.app.flags.DEFINE_string("data_file", "combine_result_orson.txt", "the file that contains the raw data")
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
-tf.app.flags.DEFINE_string("max_enc_len", 100, "The largest number of words in encoder")
-tf.app.flags.DEFINE_string("max_dec_len", 50, "The largest number of words in decoder")
+tf.app.flags.DEFINE_string("max_enc_len", 5, "The largest number of utterance in encoder")
+tf.app.flags.DEFINE_string("max_dec_len", 13, "The largest number of words in decoder")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
+tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
+
 FLAGS = tf.app.flags.FLAGS
 
 
 class Config(object):
     op = "adam"
     cell_type = "gru"
+    use_attention = False
 
     # general config
     grad_clip = 5.0
     init_w = 0.05
-    batch_size = 50
+    batch_size = 20
+    clause_embed_size = 300
     embed_size = 150
-    cell_size = 1000
+    cell_size = 500
     num_layer = 1
     max_epoch = 20
-    line_thres =2
 
     # SGD training related
     init_lr = 0.005
@@ -45,14 +48,14 @@ class Config(object):
 
 def main():
     # load corpus
-    api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7,1,2], FLAGS.max_vocab_size,
-                        FLAGS.max_enc_len, FLAGS.max_dec_len, Config.line_thres)
+    api = UttSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7,1,2], FLAGS.max_vocab_size,
+                       FLAGS.max_enc_len, FLAGS.max_dec_len)
     corpus_data = api.get_corpus()
 
     # convert to numeric input outputs that fits into TF models
-    train_feed = WordSeqDataFeed("Train", corpus_data["train"], api.vocab)
-    valid_feed = WordSeqDataFeed("Valid", corpus_data["valid"], api.vocab)
-    test_feed = WordSeqDataFeed("Test", corpus_data["test"], api.vocab)
+    train_feed = UttSeqDataFeed("Train", corpus_data["train"], api.vocab)
+    valid_feed = UttSeqDataFeed("Valid", corpus_data["valid"], api.vocab)
+    test_feed = UttSeqDataFeed("Test", corpus_data["test"], api.vocab)
 
     if not os.path.exists(FLAGS.work_dir):
         os.mkdir(FLAGS.work_dir)
@@ -69,10 +72,11 @@ def main():
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
-            model = Word2Seq(sess, config, len(train_feed.vocab), log_dir)
+            model = Utt2Seq(sess, config, vocab_size=len(train_feed.vocab), feature_size=train_feed.feat_size,
+                            max_decoder_size=train_feed.max_dec_size, log_dir=log_dir, forward=FLAGS.forward)
 
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = Word2Seq(sess, test_config, len(train_feed.vocab), None)
+            test_model = Utt2Seq(sess, test_config, len(train_feed.vocab), train_feed.feat_size, train_feed.max_dec_size, None, FLAGS.forward)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
@@ -80,7 +84,7 @@ def main():
         patience = 10  # wait for at least 10 epoch before consider early stop
         valid_loss_threshold = np.inf
         best_valid_loss = np.inf
-        checkpoint_path = os.path.join(ckp_dir, "word2seq.ckpt")
+        checkpoint_path = os.path.join(ckp_dir, "utt2seq.ckpt")
 
         if not os.path.exists(ckp_dir):
             os.mkdir(ckp_dir)

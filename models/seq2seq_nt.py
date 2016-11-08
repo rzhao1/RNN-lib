@@ -25,7 +25,7 @@ class Word2Seq(object):
 
         # include GO sent and EOS
         self.learning_rate = tf.Variable(float(config.init_lr), trainable=False)
-        self.learning_rate_decay_op = self.learning_rate.assign(self.learning_rate * config.lr_decay)
+        self.learning_rate_decay_op = self.learning_rate.assign(tf.mul(self.learning_rate, config.lr_decay))
 
         max_encode_sent_len = array_ops.shape(self.encoder_batch)[1]
         # As our current version decoder is fixed-size,
@@ -79,44 +79,42 @@ class Word2Seq(object):
                     raise ValueError("unknown cell type")
 
                 decoder_embedding_list = tf.unpack(decoder_embedding, num=max_decode_minus_one, axis=1)
+                # output project to vocabulary size
+                cell_dec = tf.nn.rnn_cell.OutputProjectionWrapper(cell_dec, vocab_size)
 
                 # No back propagation and forward only for testing
                 if forward :
                     if config.use_attention:
-                        W = tf.get_variable('linear_W', [vocab_size, cell_size], dtype=tf.float32)
-                        b = tf.get_variable('linear_b', [cell_size], dtype=tf.float32)
-                        output_projections=[W,b]
                         dec_outputs, _ = tf.nn.seq2seq.attention_decoder(decoder_embedding_list,
                                                                          initial_state=encoder_last_state,
-                                                                         attention_states=encoder_outputs, cell=cell_dec,
-                                                                         output_size=vocab_size, num_heads=1,
-                                                                         loop_function=self._extract_argmax_and_embed(embedding,output_projection=output_projections))
+                                                                         attention_states=encoder_outputs,
+                                                                         cell=cell_dec,
+                                                                         loop_function=self._extract_argmax_and_embed(embedding))
                     else:
-                        cell_dec = tf.nn.rnn_cell.OutputProjectionWrapper(cell_dec, vocab_size)
                         dec_outputs, _ = tf.nn.seq2seq.rnn_decoder(decoder_embedding_list,
                                                                    initial_state=encoder_last_state,
                                                                    cell=cell_dec,
-                                                                   loop_function=self._extract_argmax_and_embed(embedding,output_projection=None))
+                                                                   loop_function=self._extract_argmax_and_embed(embedding))
                 # Training with back propagation
                 else:
                     if config.use_attention:
                         dec_outputs, _ = tf.nn.seq2seq.attention_decoder(decoder_embedding_list,
                                                                          initial_state=encoder_last_state,
-                                                                         attention_states=encoder_outputs, cell=cell_dec,
-                                                                         output_size=vocab_size, num_heads=1,
+                                                                         attention_states=encoder_outputs,
+                                                                         cell=cell_dec,
                                                                          loop_function=None)
                     else:
-                        cell_dec = tf.nn.rnn_cell.OutputProjectionWrapper(cell_dec, vocab_size)
                         dec_outputs, _ = tf.nn.seq2seq.rnn_decoder(decoder_embedding_list,
                                                                    initial_state=encoder_last_state,
-                                                                   cell=cell_dec, loop_function=None)
+                                                                   cell=cell_dec,
+                                                                   loop_function=None)
 
-                self.logits_flat=logits_flat = tf.reshape(tf.pack(dec_outputs, 1), [-1, vocab_size])
+                self.logits_flat = tf.reshape(tf.pack(dec_outputs, 1), [-1, vocab_size])
                 # skip GO in the beginning
                 labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:], [-1, 1]), squeeze_dims=[1])
                 # mask out labels equals PAD_ID = 0
                 weights = tf.to_float(tf.sign(labels_flat))
-                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
+                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(self.logits_flat, labels_flat)
                 self.losses *= weights
                 self.mean_loss = tf.reduce_sum(self.losses) / tf.cast(batch_size, tf.float32)
                 tf.scalar_summary('cross_entropy_loss', self.mean_loss)
@@ -172,7 +170,7 @@ class Word2Seq(object):
             losses.append(loss)
             global_t += 1
             local_t += 1
-            total_word_num += np.sum(decoder_len-1)  # since we remove GO for prediction
+            total_word_num += np.sum(decoder_len-np.array(1))  # since we remove GO for prediction
             if local_t % (train_feed.num_batch / 50) == 0:
                 train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
                 print("%.2f train loss %f perleixty %f" %
@@ -180,7 +178,7 @@ class Word2Seq(object):
         end_time = time.time()
 
         train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
-        print("Train loss %f perleixty %f with step %d"
+        print("Train loss %f perleixty %f with step %f"
               % (float(train_loss), np.exp(train_loss), (end_time-start_time)/float(local_t)))
 
         return global_t, train_loss
@@ -205,7 +203,7 @@ class Word2Seq(object):
             fetches = [self.mean_loss]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
             loss = sess.run(fetches, feed_dict)
-            total_word_num += np.sum(decoder_len - 1) # since we remove GO for prediction
+            total_word_num += np.sum(decoder_len-np.array(1)) # since we remove GO for prediction
             losses.append(loss)
 
         # print final stats
@@ -285,12 +283,11 @@ class Word2Seq(object):
         outputs=[]
         #Greedy decoder extract the best one
         for idx in range(14):
-            selected_token_id = int(np.argmax(output_logits_flat[idx, 4:]))
+            selected_token_id = int(np.argmax(output_logits_flat[idx, :]))
             if selected_token_id ==train_feed.EOS_ID:
-                continue
+                break
             else:
                 outputs.append(selected_token_id)
-        print outputs
         rev_vocab = {v:k for k, v in vocab.items()}
         output_sentence= " ".join([rev_vocab[output] for output in outputs])
         print (output_sentence)

@@ -13,40 +13,43 @@ from tensorflow.python.ops import embedding_ops
 from tensorflow.python.ops import variable_scope
 
 
-class utt2seq(object):
-    def __init__(self, sess, config, vocab_size, feature_size, log_dir):
+class Utt2Seq(object):
+    def __init__(self, sess, config, vocab_size, feature_size, max_decoder_size, log_dir, forward):
         self.batch_size = batch_size = config.batch_size
         self.utt_cell_size = utt_cell_size = config.cell_size
         self.vocab_size = vocab_size
         self.feature_size = feature_size
-        self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None, feature_size), name="encoder_utts")
-        self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="decoder_seq")
-        self.encoder_lens = encoder_lens = tf.placeholder(dtype=tf.int32, shape=(None), name="encoder_lens")
+        self.max_decoder_size = max_decoder_size
+
+        self.encoder_batch = tf.placeholder(dtype=tf.float32, shape=(None, None, feature_size), name="encoder_utts")
+        self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, max_decoder_size), name="decoder_seq")
+        self.encoder_lens = tf.placeholder(dtype=tf.int32, shape=None, name="encoder_lens")
         # include GO sent and EOS
-        self.decoder_lens = decoder_lens = tf.placeholder(dtype=tf.int32, shape=(None), name="decoder_lens")
+
         self.learning_rate = tf.Variable(float(config.init_lr), trainable=False)
         self.learning_rate_decay_op = self.learning_rate.assign(self.learning_rate * config.lr_decay)
 
         max_encode_sent_len = array_ops.shape(self.encoder_batch)[1]
-        max_decode_sent_len = array_ops.shape(self.decoder_batch)[1]
-        # the decoder is in format GO sent EOS. Mostly we either work with GO sent or sent EOS.
-        max_decode_sent_len_minus_one = max_decode_sent_len - 1
+        # As our current version decoder is fixed-size,
+        # the decoder is in format GO sent EOS. Mostly we either work with GO sent or sent EOS. that is max_decoder-1
+        max_decode_minus_one = self.max_decoder_size - 1
 
         with variable_scope.variable_scope("clause-embedding"):
             embed_w = tf.get_variable('embed_w', [feature_size, config.clause_embed_size], dtype=tf.float32)
-            embed_b = tf.get_variable('embed_b', [config.clause_embed_size], dtype=tf.float32, initializer=tf.zeros_initializer)
+            embed_b = tf.get_variable('embed_b', [config.clause_embed_size], dtype=tf.float32,
+                                      initializer=tf.zeros_initializer)
 
             encoder_embedding = tf.matmul(tf.reshape(self.encoder_batch, [-1, self.feature_size]), embed_w) + embed_b
             encoder_embedding = tf.tanh(encoder_embedding)
-            encoder_embedding = tf.reshape(encoder_embedding, [-1, max_encode_sent_len, config.embed_size])
+            encoder_embedding = tf.reshape(encoder_embedding, [-1, max_encode_sent_len, config.clause_embed_size])
 
         with variable_scope.variable_scope("word-embedding"):
             embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
             # Tony decoder embedding we need to remove the last column
             decoder_embedding = embedding_ops.embedding_lookup(embedding,tf.squeeze(tf.reshape(
-                                                                   self.decoder_batch[:, 0:max_decode_sent_len_minus_one],
+                                                                   self.decoder_batch[:, 0:max_decode_minus_one],
                                                                    [-1, 1]), squeeze_dims=[1]))
-            decoder_embedding = tf.reshape(decoder_embedding, [-1, max_decode_sent_len_minus_one, config.embed_size])
+            decoder_embedding = tf.reshape(decoder_embedding, [-1, max_decode_minus_one, config.embed_size])
 
         with tf.variable_scope('seq2seq'):
             with tf.variable_scope('enc'):
@@ -64,8 +67,8 @@ class utt2seq(object):
                 if config.num_layer > 1:
                     cell_enc = rnn_cell.MultiRNNCell([cell_enc] * config.num_layer, state_is_tuple=True)
 
-                _, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding, sequence_length=encoder_lens,
-                                                        dtype=tf.float32)
+                encoder_outputs, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding, dtype=tf.float32,
+                                                                      sequence_length=self.encoder_lens)
                 if config.num_layer > 1:
                     encoder_last_state = encoder_last_state[-1]
 
@@ -77,18 +80,45 @@ class utt2seq(object):
                 else:
                     raise ValueError("unknown cell type")
 
-                # Tony: decoder length - 1 since we don't want to feed in EOS
-                output, _ = rnn.dynamic_rnn(cell_dec, decoder_embedding, initial_state=encoder_last_state,
-                                            sequence_length=decoder_lens-1, dtype=tf.float32)
+                decoder_embedding_list = tf.unpack(decoder_embedding, num=max_decode_minus_one, axis=1)
+                # output project to vocabulary size
+                cell_dec = tf.nn.rnn_cell.OutputProjectionWrapper(cell_dec, vocab_size)
+                # No back propagation and forward only for testing
+                if forward:
+                    if config.use_attention:
+                        dec_outputs, _ = tf.nn.seq2seq.attention_decoder(decoder_embedding_list,
+                                                                         initial_state=encoder_last_state,
+                                                                         attention_states=encoder_outputs,
+                                                                         cell=cell_dec,
+                                                                         loop_function=self._extract_argmax_and_embed(
+                                                                             embedding))
+                    else:
+                        dec_outputs, _ = tf.nn.seq2seq.rnn_decoder(decoder_embedding_list,
+                                                                   initial_state=encoder_last_state,
+                                                                   cell=cell_dec,
+                                                                   loop_function=self._extract_argmax_and_embed(
+                                                                       embedding))
+                # Training with back propagation
+                else:
+                    if config.use_attention:
+                        dec_outputs, _ = tf.nn.seq2seq.attention_decoder(decoder_embedding_list,
+                                                                         initial_state=encoder_last_state,
+                                                                         attention_states=encoder_outputs,
+                                                                         cell=cell_dec,
+                                                                         loop_function=None)
+                    else:
+                        dec_outputs, _ = tf.nn.seq2seq.rnn_decoder(decoder_embedding_list,
+                                                                   initial_state=encoder_last_state,
+                                                                   cell=cell_dec,
+                                                                   loop_function=None)
 
-                W = tf.get_variable('linear_W', [utt_cell_size, vocab_size], dtype=tf.float32)
-                b = tf.get_variable('linear_b', [vocab_size], dtype=tf.float32, initializer=tf.zeros_initializer)
 
-                # This part adapted from http://www.wildml.com/2016/08/rnns-in-tensorflow-a-practical-guide-and-undocumented-features/
-                logits_flat = tf.matmul(tf.reshape(output, [-1, utt_cell_size]), W) + b
-                labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:max_decode_sent_len], [-1, 1]), squeeze_dims=[1])
+                self.logits_flat = tf.reshape(tf.pack(dec_outputs, 1), [-1, vocab_size])
+                # skip GO in the beginning
+                labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:], [-1, 1]), squeeze_dims=[1])
+                # mask out labels equals PAD_ID = 0
                 weights = tf.to_float(tf.sign(labels_flat))
-                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
+                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(self.logits_flat, labels_flat)
                 self.losses *= weights
                 self.mean_loss = tf.reduce_sum(self.losses) / tf.cast(batch_size, tf.float32)
                 tf.scalar_summary('cross_entropy_loss', self.mean_loss)
@@ -113,6 +143,33 @@ class utt2seq(object):
                 print("Save summary to %s" % log_dir)
                 self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
 
+    def _extract_argmax_and_embed(self,embedding, output_projection=None,
+                                  update_embedding=False):
+        """Get a loop_function that extracts the previous symbol and embeds it.
+        Args:
+          embedding: embedding tensor for symbols.
+          output_projection: None or a pair (W, B). If provided, each fed previous
+            output will first be multiplied by W and added B.
+          update_embedding: Boolean; if False, the gradients will not propagate
+            through the embeddings.
+        Returns:
+          A loop function.
+        """
+
+        def loop_function(prev, _):
+            if output_projection is not None:
+                prev = nn_ops.xw_plus_b(
+                    prev, output_projection[0], output_projection[1])
+            prev_symbol = tf.argmax(prev, 1)
+            # Note that gradients will not propagate through the second parameter of
+            # embedding_lookup.
+            emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
+            if not update_embedding:
+                emb_prev = array_ops.stop_gradient(emb_prev)
+            return emb_prev
+
+        return loop_function
+
     def print_model_stats(self, tvars):
         total_parameters = 0
         for variable in tvars:
@@ -129,26 +186,28 @@ class utt2seq(object):
         losses = []
         local_t = 0
         total_word_num = 0
+        start_time = time.time()
         while True:
             batch = train_feed.next_batch()
             if batch is None:
                 break
             encoder_len, decoder_len, encoder_x, decoder_y = batch
-
             fetches = [self.train_ops, self.mean_loss, self.merged]
-            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len,
-                         self.decoder_lens: decoder_len}
+            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
             _, loss, summary = sess.run(fetches, feed_dict)
+            self.train_summary_writer.add_summary(summary, global_t)
             losses.append(loss)
             global_t += 1
             local_t += 1
-            total_word_num += np.sum(decoder_len-1)  # since we remove GO for prediction
+            total_word_num += np.sum(decoder_len-np.array(1))  # since we remove GO for prediction
             if local_t % (train_feed.num_batch / 50) == 0:
                 train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
                 print("%.2f train loss %f perplexity %f" %
                       (local_t / float(train_feed.num_batch), float(train_loss), np.exp(train_loss)))
+        end_time = time.time()
         train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
-        print("Train loss %f perplexity %f" % (float(train_loss), np.exp(train_loss)))
+        print("Train loss %f perplexity %f and step %f"
+              % (float(train_loss), np.exp(train_loss), (end_time-start_time)/float(local_t)))
 
         return global_t, train_loss
 
@@ -171,12 +230,9 @@ class utt2seq(object):
             encoder_len, decoder_len, encoder_x, decoder_y = batch
 
             fetches = [self.mean_loss]
-
-            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len,
-                         self.decoder_lens: decoder_len}
-
+            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
             loss = sess.run(fetches, feed_dict)
-            total_word_num += np.sum(decoder_len - 1) # since we remove GO for prediction
+            total_word_num += np.sum(decoder_len-np.array(1)) # since we remove GO for prediction
             losses.append(loss)
 
         # print final stats
