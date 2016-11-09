@@ -13,7 +13,7 @@ tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar len
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_string("max_enc_len", 100, "The largest number of words in encoder")
 tf.app.flags.DEFINE_string("max_dec_len", 50, "The largest number of words in decoder")
-tf.app.flags.DEFINE_string("model_dir","run1478582989","the model dir that we want to test")
+tf.app.flags.DEFINE_string("model_dir","run1478669231","the model dir that we want to test")
 
 FLAGS = tf.app.flags.FLAGS
 
