@@ -264,6 +264,7 @@ class Utt2Seq(object):
             logits = sess.run(fetches, feed_dict)
             max_ids = np.squeeze(np.array(logits), axis=0)
             max_ids = np.argmax(np.transpose(max_ids, [1,0,2]), axis=2)
+            local_t += 1
 
             for b_id in range(test_feed.batch_size):
                 sent_ids = max_ids[b_id]
@@ -277,6 +278,5 @@ class Utt2Seq(object):
                 print("LABEL >> %s ||| MODEL >> %s" % (label, pred))
                 predictions.append(pred)
                 labels.append(label)
-                local_t += 1
         return predictions, labels
 
