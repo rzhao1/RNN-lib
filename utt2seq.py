@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 from data_utils.split_data import UttSeqCorpus
 from data_utils.data_feed import UttSeqDataFeed
-from models.utt2seq import Utt2Seq
+from models.clause_seq2seq import Utt2Seq
 from config_utils import Utt2SeqConfig
 
 # constants
@@ -48,7 +48,7 @@ def main():
     # for forward only decoding
     test_config = Utt2SeqConfig()
     test_config.keep_prob = 1.0
-    test_config.batch_size = 5
+    test_config.batch_size = 10
     pp(config)
 
     # begin training
@@ -99,6 +99,10 @@ def main():
 
             test_feed.epoch_init(valid_config.batch_size, shuffle=False)
             valid_model.valid("TEST", sess, test_feed)
+
+            # do sampling to see what kind of sentences is generated
+            test_feed.epoch_init(test_config.batch_size, shuffle=True)
+            test_model.test("TEST", sess, test_feed, 5)
 
             done_epoch = epoch +1
 

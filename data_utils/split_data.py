@@ -340,6 +340,8 @@ class UttSeqCorpus(object):
     EMPATH_ID = 5
     LIWC_ID = 6
 
+    cache_name = "post_utt_features.txt"
+
     def __init__(self, data_dir, data_name, split_size, max_vocab_size, max_enc_utt_len, max_dec_word_len):
         """"
         :param line_thres: how many line will be merged as encoding sentensce
@@ -358,8 +360,13 @@ class UttSeqCorpus(object):
         self.max_vocab_size = max_vocab_size
         self.max_enc_utt_len = max_enc_utt_len
         self.max_dec_word_len = max_dec_word_len
-        with open(os.path.join(data_dir, data_name), "rb") as f:
-            self._parse_file(f.readlines(), split_size)
+
+        utt_features = self.load_data()
+        if utt_features is None:
+            with open(os.path.join(data_dir, data_name), "rb") as f:
+                utt_features = self._parse_file(f.readlines())
+
+        self._create_corpus(utt_features, split_size)
 
         # clip train_y. Different word2seq, encoder don't need clipping, since it fixed history
         self.train_y = self.clip_to_max_len(self.train_y)
@@ -403,7 +410,7 @@ class UttSeqCorpus(object):
         print ('%s encoder avg len %.2f max len %.2f of %d lines' % (name, avg_len, max_len, len(enc_data)))
         print ('%s decoder avg len %.2f max len %.2f of %d lines' % (name, dec_avg_len, dec_max_len, len(dec_data)))
 
-    def _parse_file(self, lines, split_size):
+    def _parse_file(self, lines):
         """
         :param lines: Each line is a line from the file
         """
@@ -434,7 +441,14 @@ class UttSeqCorpus(object):
         # tokenize the utterance text
         for feature in utt_features:
             if feature != "$$$":
-                feature[self.TEXT_ID] = self.tokenizer(feature[self.TEXT_ID])
+                feature[self.TEXT_ID] = [tkn.lower() for tkn in self.tokenizer(feature[self.TEXT_ID])]
+
+        # dump the file
+        self.dump_data(utt_features)
+
+        return utt_features
+
+    def _create_corpus(self, utt_features, split_size):
 
         total_size = len(utt_features)
         train_size = int(total_size * split_size[0] / 10)
@@ -471,3 +485,20 @@ class UttSeqCorpus(object):
         return {"train": (self.train_x, self.train_y),
                 "valid": (self.valid_x, self.valid_y),
                 "test": (self.test_x, self.test_y)}
+
+    def dump_data(self, utt_features):
+        if os.path.exists(os.path.join(self._cache_dir, self.cache_name)):
+            raise ValueError("File already exists. Abort dumping")
+        print("Dumping to %s with %d lines" % (self.cache_name, len(utt_features)))
+        with open(os.path.join(self._cache_dir, self.cache_name), "wb") as f:
+            for line in utt_features:
+                f.write(json.dumps(line) + "\n")
+
+    def load_data(self):
+        if not os.path.exists(os.path.join(self._cache_dir, self.cache_name)):
+            return None
+
+        with open(os.path.join(self._cache_dir, self.cache_name), "rb") as f:
+            lines = f.readlines()
+            lines = [json.loads(l.strip()) for l in lines]
+        return lines
