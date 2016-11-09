@@ -96,7 +96,7 @@ class Utt2Seq(object):
                         dec_outputs, _ = tf.nn.seq2seq.rnn_decoder(decoder_embedding_list,
                                                                    initial_state=encoder_last_state,
                                                                    cell=cell_dec,
-                                                                   loop_function=self._extract_argmax_and_embed(
+                                                                   loop_function=self._gumbel_sample_and_embed(
                                                                        embedding))
                 # Training with back propagation
                 else:
@@ -142,6 +142,20 @@ class Utt2Seq(object):
                 train_log_dir = os.path.join(log_dir, "train")
                 print("Save summary to %s" % log_dir)
                 self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
+
+    @staticmethod
+    def _gumbel_sample_and_embed(embedding, max_gumbel_noise=1.0):
+
+        def loop_function(prev, _):
+            matrix_U = -1.0 * tf.log(
+                -1.0 * tf.log(tf.random_uniform(tf.shape(prev), minval=0.0, maxval=max_gumbel_noise)))
+            prev_symbol = tf.argmax(tf.sub(prev, matrix_U), dimension=1)
+            # Note that gradients will not propagate through the second parameter of
+            # embedding_lookup.
+            emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
+            return emb_prev
+
+        return loop_function
 
     def _extract_argmax_and_embed(self,embedding, output_projection=None,
                                   update_embedding=False):

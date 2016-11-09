@@ -36,8 +36,9 @@ def main():
     if not os.path.exists(FLAGS.work_dir):
         os.mkdir(FLAGS.work_dir)
 
-    log_dir = os.path.join(FLAGS.work_dir, "run" + str(int(time.time())))
-    os.mkdir(log_dir)
+    log_dir = os.path.join(FLAGS.work_dir, "run1478668837") #+ str(int(time.time())))
+    if not os.path.exists(log_dir):
+        os.mkdir(log_dir)
     config = Utt2SeqConfig()
 
     # for perplexity evaluation
@@ -89,6 +90,10 @@ def main():
 
         for epoch in range(config.max_epoch):
             print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
+
+            # do sampling to see what kind of sentences is generated
+            test_feed.epoch_init(test_config.batch_size, shuffle=True)
+            test_model.test("TEST", sess, test_feed, 5)
 
             train_feed.epoch_init(config.batch_size, shuffle=True)
             global_t, train_loss = model.train(global_t, sess, train_feed)
