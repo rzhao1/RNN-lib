@@ -112,13 +112,13 @@ class Utt2Seq(object):
                                                                    cell=cell_dec,
                                                                    loop_function=None)
 
-
-                self.logits_flat = tf.reshape(tf.pack(dec_outputs, 1), [-1, vocab_size])
+                self.logits = dec_outputs
+                logits_flat = tf.reshape(tf.pack(dec_outputs, 1), [-1, vocab_size])
                 # skip GO in the beginning
                 labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:], [-1, 1]), squeeze_dims=[1])
                 # mask out labels equals PAD_ID = 0
                 weights = tf.to_float(tf.sign(labels_flat))
-                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(self.logits_flat, labels_flat)
+                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
                 self.losses *= weights
                 self.mean_loss = tf.reduce_sum(self.losses) / tf.cast(batch_size, tf.float32)
                 tf.scalar_summary('cross_entropy_loss', self.mean_loss)
@@ -214,7 +214,7 @@ class Utt2Seq(object):
     def valid(self, name, sess, valid_feed):
         """
         No training is involved. Just forward path and compute the metrics
-        :param name: the name, ususally TEST or VALID
+        :param name: the name, usually TEST or VALID
         :param sess: the tf session
         :param valid_feed: the data feed
         :return: average loss
@@ -239,3 +239,45 @@ class Utt2Seq(object):
         valid_loss = float(np.sum(losses) / total_word_num * valid_feed.batch_size)
         print("%s loss %f and perplexity %f" % (name, valid_loss, np.exp(valid_loss)))
         return valid_loss
+
+    def test(self, name, sess, test_feed, num_batch=None):
+        """
+              No training is involved. Just forward path and compute the metrics
+              :param name: the name, usually TEST or VALID
+              :param sess: the tf session
+              :param test_feed: the data feed
+              :param num_batch: if None run for the whole feed. Otherwise stop when num_batch is reached
+              :return: average loss
+              """
+        local_t = 0
+        predictions = []
+        labels = []
+
+        while True:
+            batch = test_feed.next_batch()
+            if batch is None or (num_batch is not None and local_t > num_batch):
+                break
+
+            encoder_len, decoder_len, encoder_x, decoder_y = batch
+            fetches = [self.logits]
+            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
+            logits = sess.run(fetches, feed_dict)
+            max_ids = np.squeeze(np.array(logits), axis=0)
+            print max_ids.shape
+            max_ids = np.argmax(np.transpose(max_ids, [1,0,2]), axis=1)
+
+            for b_id in range(test_feed.batch_size):
+                sent_ids = max_ids[b_id]
+                label_ids = decoder_y[b_id, 0:decoder_len[b_id]-1]
+
+                first_eos = np.argwhere(sent_ids == test_feed.EOS_ID)
+                if len(first_eos) > 0:
+                    sent_ids = sent_ids[0:first_eos[0][0]]
+                pred = " ".join([test_feed.rev_vocab[w_id] for w_id in sent_ids])
+                label = " ".join([test_feed.rev_vocab[w_id] for w_id in label_ids])
+                print("LABEL >> is %s ||| MODEL >> is %s" % (label, pred))
+                predictions.append(pred)
+                labels.append(label)
+                local_t += 1
+        return predictions, labels
+

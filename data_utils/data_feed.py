@@ -249,6 +249,9 @@ class UttSeqDataFeed(object):
         # make sure we add 5 new special symbol
         assert len(self.vocab) == (len(vocab)+5)
 
+        # get reverse vocab
+        self.rev_vocab = {v:k for k, v in self.vocab.items()}
+
         data_x, data_y = data
 
         # convert data into ids
