@@ -263,7 +263,6 @@ class Utt2Seq(object):
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
             logits = sess.run(fetches, feed_dict)
             max_ids = np.squeeze(np.array(logits), axis=0)
-            print max_ids.shape
             max_ids = np.argmax(np.transpose(max_ids, [1,0,2]), axis=1)
 
             for b_id in range(test_feed.batch_size):

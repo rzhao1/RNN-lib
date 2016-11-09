@@ -48,7 +48,7 @@ def main():
     # for forward only decoding
     test_config = Utt2SeqConfig()
     test_config.keep_prob = 1.0
-    test_config.batch_size = 5
+    test_config.batch_size = 10
     pp(config)
 
     # begin training
@@ -102,7 +102,7 @@ def main():
 
             # do sampling to see what kind of sentences is generated
             test_feed.epoch_init(test_config.batch_size, shuffle=False)
-            test_model.test("TEST", sess, test_feed, 1)
+            test_model.test("TEST", sess, test_feed, 10)
 
             done_epoch = epoch +1
 
