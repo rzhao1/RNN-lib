@@ -1,6 +1,6 @@
 class Utt2SeqConfig(object):
-    op = "adam"
-    cell_type = "gru"
+    op = "sgd"
+    cell_type = "lstm"
     use_attention = False
 
     # general config
@@ -14,7 +14,7 @@ class Utt2SeqConfig(object):
     max_epoch = 20
 
     # SGD training related
-    init_lr = 0.005
+    init_lr = 0.6
     lr_hold = 1
     lr_decay = 0.6
     keep_prob = 0.6
