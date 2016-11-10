@@ -120,8 +120,10 @@ class Utt2Seq(object):
                 weights = tf.to_float(tf.sign(labels_flat))
                 self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
                 self.losses *= weights
-                self.mean_loss = tf.reduce_sum(self.losses) / tf.cast(batch_size, tf.float32)
-                tf.scalar_summary('cross_entropy_loss', self.mean_loss)
+                self.loss_sum = tf.reduce_sum(self.losses)
+                self.real_loss = self.loss_sum / tf.reduce_sum(weights)
+
+                tf.scalar_summary('cross_entropy_loss', self.real_loss)
                 self.merged = tf.merge_all_summaries()
 
                 # choose a optimizer
@@ -133,7 +135,7 @@ class Utt2Seq(object):
                     optim = tf.train.GradientDescentOptimizer(self.learning_rate)
 
                 tvars = tf.trainable_variables()
-                grads, _ = tf.clip_by_global_norm(tf.gradients(self.mean_loss, tvars), config.grad_clip)
+                grads, _ = tf.clip_by_global_norm(tf.gradients(self.real_loss, tvars), config.grad_clip)
                 self.train_ops = optim.apply_gradients(zip(grads, tvars))
                 self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V2)
 
@@ -192,7 +194,7 @@ class Utt2Seq(object):
             if batch is None:
                 break
             encoder_len, decoder_len, encoder_x, decoder_y = batch
-            fetches = [self.train_ops, self.mean_loss, self.merged]
+            fetches = [self.train_ops, self.loss_sum, self.merged]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
             _, loss, summary = sess.run(fetches, feed_dict)
             self.train_summary_writer.add_summary(summary, global_t)
@@ -201,11 +203,11 @@ class Utt2Seq(object):
             local_t += 1
             total_word_num += np.sum(decoder_len-np.array(1))  # since we remove GO for prediction
             if local_t % (train_feed.num_batch / 50) == 0:
-                train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
+                train_loss = np.sum(losses) / total_word_num
                 print("%.2f train loss %f perplexity %f" %
                       (local_t / float(train_feed.num_batch), float(train_loss), np.exp(train_loss)))
         end_time = time.time()
-        train_loss = np.sum(losses) / total_word_num * train_feed.batch_size
+        train_loss = np.sum(losses) / total_word_num
         print("Train loss %f perplexity %f and step %f"
               % (float(train_loss), np.exp(train_loss), (end_time-start_time)/float(local_t)))
 
@@ -229,14 +231,14 @@ class Utt2Seq(object):
 
             encoder_len, decoder_len, encoder_x, decoder_y = batch
 
-            fetches = [self.mean_loss]
+            fetches = [self.loss_sum]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
             loss = sess.run(fetches, feed_dict)
             total_word_num += np.sum(decoder_len-np.array(1)) # since we remove GO for prediction
             losses.append(loss)
 
         # print final stats
-        valid_loss = float(np.sum(losses) / total_word_num * valid_feed.batch_size)
+        valid_loss = float(np.sum(losses) / total_word_num)
         print("%s loss %f and perplexity %f" % (name, valid_loss, np.exp(valid_loss)))
         return valid_loss
 
