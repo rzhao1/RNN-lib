@@ -1,10 +1,7 @@
 import os
 import time
 import numpy as np
-from tensorflow.python.ops import nn_ops
-
 import tensorflow as tf
-import math
 from tensorflow.python.ops import rnn_cell, rnn
 from loop_functions import *
 
@@ -45,7 +42,6 @@ class Utt2Seq(object):
             encoder_embedding = tf.tanh(encoder_embedding)
             encoder_embedding = tf.reshape(encoder_embedding, [-1, max_encode_sent_len, config.clause_embed_size])
 
-
         with tf.variable_scope('seq2seq'):
             with tf.variable_scope('enc'):
                 if config.cell_type == "gru":
@@ -67,7 +63,6 @@ class Utt2Seq(object):
                                                                       sequence_length=self.encoder_lens)
                 if config.num_layer > 1:
                     encoder_last_state = encoder_last_state[-1]
-
 
             # post process the decoder embedding inputs and encoder_last_state
             with variable_scope.variable_scope("word-embedding"):
@@ -183,7 +178,6 @@ class Utt2Seq(object):
             emb_inp = [embedding_ops.embedding_lookup(embedding, decoder_inputs[:, i]) for i in range(seq_len)]
 
         return emb_inp, initial_state
-
 
     def train(self, global_t, sess, train_feed):
         losses = []
