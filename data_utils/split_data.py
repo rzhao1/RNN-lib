@@ -365,6 +365,7 @@ class UttSeqCorpus(object):
         if utt_features is None:
             with open(os.path.join(data_dir, data_name), "rb") as f:
                 utt_features = self._parse_file(f.readlines())
+        utt_features = utt_features[0:1000]
 
         self._create_corpus(utt_features, split_size)
 

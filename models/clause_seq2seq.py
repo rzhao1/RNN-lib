@@ -19,6 +19,7 @@ class Utt2Seq(object):
         self.feature_size = feature_size
         self.max_decoder_size = max_decoder_size
         self.beam_size = config.beam_size
+        self.word_embed_size = config.embed_size
         self.is_lstm_cell = config.cell_type == "lstm"
 
         self.encoder_batch = tf.placeholder(dtype=tf.float32, shape=(None, None, feature_size), name="encoder_utts")
@@ -171,7 +172,7 @@ class Utt2Seq(object):
             emb_inp = []
             for i in range(seq_len):
                 embed = embedding_ops.embedding_lookup(embedding, decoder_inputs[:, i])
-                embed = tf.reshape(tf.tile(embed, [1, self.beam_size]), [-1, self.vocab_size])
+                embed = tf.reshape(tf.tile(embed, [1, self.beam_size]), [-1, self.word_embed_size])
                 emb_inp.append(embed)
 
             if type(initial_state) is tf.nn.seq2seq.rnn_cell.LSTMStateTuple:
