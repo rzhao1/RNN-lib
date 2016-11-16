@@ -17,14 +17,18 @@ tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use
 tf.app.flags.DEFINE_string("max_enc_len", 5, "The largest number of utterance in encoder")
 tf.app.flags.DEFINE_string("max_dec_len", 13, "The largest number of words in decoder")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
-tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
+tf.app.flags.DEFINE_bool("forward", True, "Do decoding only")
+tf.app.flags.DEFINE_string("test_path", "run1478720226", "the dir to load checkpoint for forward only")
+
 
 FLAGS = tf.app.flags.FLAGS
 
 
 def main():
+    config = Utt2SeqConfig()
+
     # load corpus
-    api = UttSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7,1,2], FLAGS.max_vocab_size,
+    api = UttSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [98, 1, 1], FLAGS.max_vocab_size,
                        FLAGS.max_enc_len, FLAGS.max_dec_len)
     corpus_data = api.get_corpus()
 
@@ -36,9 +40,11 @@ def main():
     if not os.path.exists(FLAGS.work_dir):
         os.mkdir(FLAGS.work_dir)
 
-    log_dir = os.path.join(FLAGS.work_dir, "run" + str(int(time.time())))
-    os.mkdir(log_dir)
-    config = Utt2SeqConfig()
+    if FLAGS.forward:
+        log_dir = os.path.join(FLAGS.work_dir, FLAGS.test_path)
+    else:
+        log_dir = os.path.join(FLAGS.work_dir, "run" + str(int(time.time())))
+        os.mkdir(log_dir)
 
     # for perplexity evaluation
     valid_config = Utt2SeqConfig()
