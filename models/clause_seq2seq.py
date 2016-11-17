@@ -132,7 +132,8 @@ class Utt2Seq(object):
                 print("Save summary to %s" % log_dir)
                 self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
 
-    def print_model_stats(self, tvars):
+    @staticmethod
+    def print_model_stats(tvars):
         total_parameters = 0
         for variable in tvars:
             print("Trainable %s" % variable.name)
