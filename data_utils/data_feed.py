@@ -28,6 +28,7 @@ class WordSeqDataFeed(object):
         self.max_decoder_size = config.max_decoder_size
         # make sure we add 4 new special symbol
         assert len(self.vocab) == (len(vocab)+4)
+        self.rev_vocab = {v:k for k, v in self.vocab.items()}
 
         data_x, data_y = data
 
