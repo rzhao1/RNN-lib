@@ -62,18 +62,19 @@ def main():
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
             model = Utt2Seq(sess, config, vocab_size=len(train_feed.vocab), feature_size=train_feed.feat_size,
-                            max_decoder_size=train_feed.max_dec_size, log_dir=None if FLAGS.forward else log_dir,
+                            max_decoder_size=train_feed.max_dec_size, eos_id=train_feed.EOS_ID,
+                            log_dir=None if FLAGS.forward else log_dir,
                             forward=False)
 
         # for evaluation perplexity on VALID and TEST set
         with tf.variable_scope("model", reuse=True, initializer=initializer):
             valid_model = Utt2Seq(sess, valid_config, len(train_feed.vocab), train_feed.feat_size,
-                                  train_feed.max_dec_size, None, False)
+                                  train_feed.max_dec_size, train_feed.EOS_ID, None, False)
 
         # get a random batch and do forward decoding. Print the most likely response
         with tf.variable_scope("model", reuse=True, initializer=initializer):
             test_model = Utt2Seq(sess, valid_config, len(train_feed.vocab), train_feed.feat_size,
-                                  train_feed.max_dec_size, None, True)
+                                  train_feed.max_dec_size, train_feed.EOS_ID, None, True)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 

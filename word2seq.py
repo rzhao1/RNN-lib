@@ -60,14 +60,15 @@ def main():
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
-            model = Word2Seq(sess, config, len(train_feed.vocab), None if FLAGS.forward else log_dir, forward=False)
+            model = Word2Seq(sess, config, len(train_feed.vocab), train_feed.EOS_ID,
+                             log_dir=None if FLAGS.forward else log_dir, forward=False)
 
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            valid_model = Word2Seq(sess, valid_config, len(train_feed.vocab), None, forward=False)
+            valid_model = Word2Seq(sess, valid_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=False)
 
         # get a random batch and do forward decoding. Print the most likely response
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = Word2Seq(sess, test_config, len(train_feed.vocab), None, forward=True)
+            test_model = Word2Seq(sess, test_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=False)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 

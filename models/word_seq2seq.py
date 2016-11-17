@@ -13,7 +13,7 @@ import nltk.translate.bleu_score as bleu
 
 class Word2Seq(object):
 
-    def __init__(self, sess, config, vocab_size, log_dir=None, forward=False):
+    def __init__(self, sess, config, vocab_size, eos_id, log_dir=None, forward=False):
         self.batch_size = config.batch_size
         self.cell_size = cell_size = config.cell_size
         self.vocab_size = vocab_size
@@ -22,6 +22,7 @@ class Word2Seq(object):
         self.beam_size = config.beam_size
         self.word_embed_size = config.embed_size
         self.is_lstm_cell = config.cell_type == "lstm"
+        self.eos_id = eos_id
 
         self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="encoder_seq")
         # max_decoder_size including GO and EOS
@@ -160,7 +161,8 @@ class Word2Seq(object):
         if self.forward:
             loop_function = beam_and_embed(embedding, self.beam_size,
                                            num_symbol, beam_symbols,
-                                           beam_path, log_beam_probs)
+                                           beam_path, log_beam_probs,
+                                           self.eos_id)
         else:
             loop_function = None
         return loop_function
