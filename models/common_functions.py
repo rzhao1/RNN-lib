@@ -1,12 +1,8 @@
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import math_ops
-from tensorflow.python.ops.nn import rnn_cell
 from tensorflow.python.ops import nn_ops
-from tensorflow.python import shape
 from tensorflow.python.ops import embedding_ops
 import tensorflow as tf
-from tensorflow.python.util import nest
 
 
 def beam_and_embed(embedding, beam_size, num_symbols, beam_symbols, beam_path, log_beam_probs):
@@ -110,3 +106,48 @@ def rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None, scope=N
                 loop_function(prev, len(decoder_inputs))
 
     return outputs, state
+
+
+def get_n_best(beam_symbols, beam_path, beam_log, top_n, EOS_ID):
+    """
+    Args:
+        beam_symbols: decoder_len * beam_size
+        beam_path:  decoder_len * beam_size
+        beam_log: decoder_len * beam_size
+        top_n: keep top n results
+    Returns: [(log_prob, [path])] * top_n
+    """
+    dec_len, beam_size = beam_symbols.shape[0], beam_symbols.shape[1]
+    results = []
+
+    def _get_path(s_t, s_b):
+        _score = beam_log[s_t][s_b]
+        _ptr = s_b
+        _path = []
+        for _id in range(s_t, -1, -1):
+            _path.append(beam_symbols[_id][_ptr])
+            _ptr = beam_path[_id][_ptr]
+            if _id > 0 and beam_symbols[_id-1][_ptr] == EOS_ID:
+                break
+        _path = _path[::-1]
+        return _score, _path
+
+    def clean_up(path):
+        # check if there is any intermediate EOS
+        if len(path) > 1 and EOS_ID in path[:-1]:
+            print "something wrong here: ",
+            print path
+            return None
+        return [tkn for tkn in path if tkn != EOS_ID]
+
+    for beam_id in range(beam_size):
+        for t_id in range(dec_len):
+            # try construct a path if its EOS or last row
+            if t_id == dec_len-1 or beam_symbols[t_id][beam_id] == EOS_ID:
+                score, path = _get_path(t_id, beam_id)
+                # clean up
+                path = clean_up(path)
+                if path:
+                    results.append((score, path))
+    sorted_results = sorted(results, reverse=True)
+    return sorted_results[0:top_n]

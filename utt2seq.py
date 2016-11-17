@@ -95,47 +95,62 @@ def main():
             print("Created models with fresh parameters.")
             sess.run(tf.initialize_all_variables())
 
-        for epoch in range(config.max_epoch):
-            print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
+        if not FLAGS.forward:
+            for epoch in range(config.max_epoch):
+                print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
 
-            train_feed.epoch_init(config.batch_size, shuffle=True)
-            global_t, train_loss = model.train(global_t, sess, train_feed)
+                train_feed.epoch_init(config.batch_size, shuffle=True)
+                global_t, train_loss = model.train(global_t, sess, train_feed)
+
+                # begin validation
+                valid_feed.epoch_init(valid_config.batch_size, shuffle=False)
+                valid_loss = valid_model.valid("VALID", sess, valid_feed)
+
+                test_feed.epoch_init(valid_config.batch_size, shuffle=False)
+                valid_model.valid("TEST", sess, test_feed)
+
+                # do sampling to see what kind of sentences is generated
+                test_feed.epoch_init(test_config.batch_size, shuffle=True)
+                test_model.test("TEST", sess, test_feed, 5)
+
+                done_epoch = epoch +1
+
+                # only save a models if the dev loss is smaller
+                # Decrease learning rate if no improvement was seen over last 3 times.
+                if config.op == "sgd" and done_epoch > config.lr_hold:
+                    sess.run(model.learning_rate_decay_op)
+
+                if valid_loss < best_valid_loss:
+                    if valid_loss <= valid_loss_threshold * config.improve_threshold:
+                        patience = max(patience, done_epoch * config.patient_increase)
+                        valid_loss_threshold = valid_loss
+
+                    # still save the best train model
+                    if FLAGS.save_model:
+                        print("Saving model!")
+                        model.saver.save(sess, checkpoint_path, global_step=epoch)
+                    best_valid_loss = valid_loss
+
+                if config.early_stop and patience <= done_epoch:
+                    print("!!Early stop due to run out of patience!!")
+                    break
+
+            print("Best valid loss %f and perpleixyt %f" % (best_valid_loss, np.exp(best_valid_loss)))
+            print("Done training")
+        else:
+            # do sampling to see what kind of sentences is generated
+            test_feed.epoch_init(test_config.batch_size, shuffle=True)
+            test_model.test("TEST", sess, test_feed, num_batch=2)
 
             # begin validation
             valid_feed.epoch_init(valid_config.batch_size, shuffle=False)
-            valid_loss = valid_model.valid("VALID", sess, valid_feed)
+            valid_model.valid("VALID", sess, valid_feed)
 
             test_feed.epoch_init(valid_config.batch_size, shuffle=False)
             valid_model.valid("TEST", sess, test_feed)
 
-            # do sampling to see what kind of sentences is generated
-            test_feed.epoch_init(test_config.batch_size, shuffle=True)
-            test_model.test("TEST", sess, test_feed, 5)
 
-            done_epoch = epoch +1
 
-            # only save a models if the dev loss is smaller
-            # Decrease learning rate if no improvement was seen over last 3 times.
-            if config.op == "sgd" and done_epoch > config.lr_hold:
-                sess.run(model.learning_rate_decay_op)
-
-            if valid_loss < best_valid_loss:
-                if valid_loss <= valid_loss_threshold * config.improve_threshold:
-                    patience = max(patience, done_epoch * config.patient_increase)
-                    valid_loss_threshold = valid_loss
-
-                # still save the best train model
-                if FLAGS.save_model:
-                    print("Saving model!")
-                    model.saver.save(sess, checkpoint_path, global_step=epoch)
-                best_valid_loss = valid_loss
-
-            if config.early_stop and patience <= done_epoch:
-                print("!!Early stop due to run out of patience!!")
-                break
-
-        print("Best valid loss %f and perpleixyt %f" % (best_valid_loss, np.exp(best_valid_loss)))
-        print("Done training")
 
 if __name__ == "__main__":
     main()

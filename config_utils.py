@@ -12,7 +12,7 @@ class Utt2SeqConfig(object):
     cell_size = 500
     num_layer = 2
     max_epoch = 20
-    beam_size = 10
+    beam_size = 2
 
     # SGD training related
     init_lr = 0.6

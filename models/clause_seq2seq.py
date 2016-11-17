@@ -3,11 +3,12 @@ import time
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops import rnn_cell, rnn
-from loop_functions import *
+from common_functions import *
 
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import embedding_ops
 from tensorflow.python.ops import variable_scope
+import nltk.translate.bleu_score as bleu
 
 
 class Utt2Seq(object):
@@ -44,6 +45,9 @@ class Utt2Seq(object):
             encoder_embedding = tf.tanh(encoder_embedding)
             encoder_embedding = tf.reshape(encoder_embedding, [-1, max_encode_sent_len, config.clause_embed_size])
 
+        with variable_scope.variable_scope("word-embedding"):
+            embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
+
         with tf.variable_scope('seq2seq'):
             with tf.variable_scope('enc'):
                 if config.cell_type == "gru":
@@ -67,11 +71,9 @@ class Utt2Seq(object):
                     encoder_last_state = encoder_last_state[-1]
 
             # post process the decoder embedding inputs and encoder_last_state
-            with variable_scope.variable_scope("word-embedding"):
-                embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
-                # Tony decoder embedding we need to remove the last column
-                decoder_embedding, initial_state = self.get_dec_inp_embedding(embedding, encoder_last_state,
-                                                                              self.decoder_batch[:, 0:max_decode_minus_one])
+            # Tony decoder embedding we need to remove the last column
+            decoder_embedding, encoder_last_state = self.prepare_for_beam(embedding, encoder_last_state,
+                                                                     self.decoder_batch[:, 0:max_decode_minus_one])
 
             with variable_scope.variable_scope('dec'):
                 if config.cell_type == "gru":
@@ -93,6 +95,10 @@ class Utt2Seq(object):
                     cell=cell_dec)
 
                 self.logits = dec_outputs
+                self.beam_symbols = beam_symbols
+                self.beam_path = beam_path
+                self.log_beam_probs = log_beam_probs
+
                 logits_flat = tf.reshape(tf.pack(dec_outputs, 1), [-1, vocab_size])
                 # skip GO in the beginning
                 labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:], [-1, 1]), squeeze_dims=[1])
@@ -146,11 +152,9 @@ class Utt2Seq(object):
         :return: decoder_outputs, the last decoder_state
         """
         beam_symbols, beam_path, log_beam_probs = [], [], []
-
-        with variable_scope.variable_scope(scope or "embedding_rnn_decoder"):
-            loop_function = self.get_loop_function(embedding, self.vocab_size, beam_symbols, beam_path, log_beam_probs)
-            outputs, state = rnn_decoder(decoder_embedding, initial_state, cell, loop_function=loop_function, scope=scope)
-            return outputs, beam_symbols, beam_path, log_beam_probs
+        loop_function = self.get_loop_function(embedding, self.vocab_size, beam_symbols, beam_path, log_beam_probs)
+        outputs, state = rnn_decoder(decoder_embedding, initial_state, cell, loop_function=loop_function, scope=scope)
+        return outputs, beam_symbols, beam_path, log_beam_probs
 
     def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
         if self.forward:
@@ -161,7 +165,7 @@ class Utt2Seq(object):
             loop_function = None
         return loop_function
 
-    def get_dec_inp_embedding(self, embedding, initial_state, decoder_inputs):
+    def prepare_for_beam(self, embedding, initial_state, decoder_inputs):
         """
         Map the decoder inputs into embedding. If using beam search, also tile the inputs by beam_size times
         """
@@ -245,42 +249,64 @@ class Utt2Seq(object):
         return valid_loss
 
     def test(self, name, sess, test_feed, num_batch=None):
-        """
-              No training is involved. Just forward path and compute the metrics
-              :param name: the name, usually TEST or VALID
-              :param sess: the tf session
-              :param test_feed: the data feed
-              :param num_batch: if None run for the whole feed. Otherwise stop when num_batch is reached
-              :return: average loss
-              """
+        all_refs = []
+        all_n_bests = [] # 2D list. List of List of N-best
         local_t = 0
-        predictions = []
-        labels = []
-
+        fetch = [self.logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
         while True:
             batch = test_feed.next_batch()
             if batch is None or (num_batch is not None and local_t > num_batch):
                 break
-
             encoder_len, decoder_len, encoder_x, decoder_y = batch
-            fetches = [self.logits]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
-            logits = sess.run(fetches, feed_dict)
-            max_ids = np.squeeze(np.array(logits), axis=0)
-            max_ids = np.argmax(np.transpose(max_ids, [1,0,2]), axis=2)
+            pred, symbol, path, probs = sess.run(fetch, feed_dict)
+            # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
+            # label: [B x max_dec_len+1]
+
+            beam_symbols_matrix = np.array(symbol)
+            beam_path_matrix = np.array(path)
+            beam_log_matrix = np.array(probs)
+
+            for b_idx in range(test_feed.batch_size):
+                ref = list(decoder_y[b_idx, 1:])
+                # remove padding and EOS symbol
+                ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                # use lattic to find the N-best list
+                n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
+
+                all_refs.append(ref)
+                all_n_bests.append(n_best)
+
             local_t += 1
 
-            for b_id in range(test_feed.batch_size):
-                sent_ids = max_ids[b_id]
-                label_ids = decoder_y[b_id, 0:decoder_len[b_id]-1]
+        # get error
+        return self.beam_error(all_refs, all_n_bests, name, test_feed.rev_vocab)
 
-                first_eos = np.argwhere(sent_ids == test_feed.EOS_ID)
-                if len(first_eos) > 0:
-                    sent_ids = sent_ids[0:first_eos[0][0]]
-                pred = " ".join([test_feed.rev_vocab[w_id] for w_id in sent_ids])
-                label = " ".join([test_feed.rev_vocab[w_id] for w_id in label_ids])
-                print("LABEL >> %s ||| MODEL >> %s" % (label, pred))
-                predictions.append(pred)
-                labels.append(label)
-        return predictions, labels
+    def beam_error(self, all_refs, all_n_best, name, rev_vocab):
+        all_bleu = []
+        for ref, n_best in zip(all_refs, all_n_best):
+            ref = [rev_vocab[word] for word in ref]
+            local_bleu = []
+            for score, best in n_best:
+                best = [rev_vocab[word] for word in best]
+                print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
+                try:
+                    local_bleu.append(bleu.sentence_bleu([ref], best))
+                except ZeroDivisionError:
+                    local_bleu.append(0.0)
+            print("*"*20)
+            all_bleu.append(local_bleu)
+
+        # begin evaluation of @n
+        reports = []
+        for b in range(self.beam_size):
+            avg_best_bleu = np.mean([np.max(local_bleu[0:b + 1]) for local_bleu in all_bleu])
+            record = "%s@%d BLEU %f" % (name, b + 1, float(avg_best_bleu))
+            reports.append(record)
+            print(record)
+
+        return reports
 
