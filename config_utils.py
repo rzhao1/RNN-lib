@@ -33,10 +33,11 @@ class Word2SeqConfig(object):
     grad_clip = 5.0
     init_w = 0.05
     batch_size = 30
-    embed_size = 150
+    embed_size = 300
     cell_size = 500
     num_layer = 1
     max_epoch = 20
+    beam_size = 5
 
     line_thres =2
     max_decoder_size=15

@@ -2,7 +2,7 @@ import sys
 import tensorflow as tf
 from data_utils.split_data import WordSeqCorpus
 from data_utils.data_feed import WordSeqDataFeed
-from models.seq2seq_nt import Word2Seq
+from models.word_seq2seq import Word2Seq
 import os
 
 # constants

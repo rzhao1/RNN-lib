@@ -1,27 +1,32 @@
 import os
 import time
 import numpy as np
+from common_functions import *
 from tensorflow.python.ops import nn_ops
-
 import tensorflow as tf
 from tensorflow.python.ops import rnn_cell, rnn
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import embedding_ops
 from tensorflow.python.ops import variable_scope
+import nltk.translate.bleu_score as bleu
 
 
 class Word2Seq(object):
 
     def __init__(self, sess, config, vocab_size, log_dir=None, forward=False):
-        self.batch_size = batch_size = config.batch_size
+        self.batch_size = config.batch_size
         self.cell_size = cell_size = config.cell_size
         self.vocab_size = vocab_size
         self.max_decoder_size = config.max_decoder_size
+        self.forward = forward
+        self.beam_size = config.beam_size
+        self.word_embed_size = config.embed_size
+        self.is_lstm_cell = config.cell_type == "lstm"
 
-        self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(batch_size, None), name="encoder_seq")
+        self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="encoder_seq")
         # max_decoder_size including GO and EOS
-        self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(batch_size, config.max_decoder_size), name="decoder_seq")
-        self.encoder_lens  = tf.placeholder(dtype=tf.int32, shape=(batch_size), name="encoder_lens")
+        self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, config.max_decoder_size), name="decoder_seq")
+        self.encoder_lens  = tf.placeholder(dtype=tf.int32, shape=(None), name="encoder_lens")
 
         # include GO sent and EOS
         self.learning_rate = tf.Variable(float(config.init_lr), trainable=False)
@@ -35,17 +40,9 @@ class Word2Seq(object):
         with variable_scope.variable_scope("word_embedding"):
             embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
 
-            encoder_embedding = embedding_ops.embedding_lookup(embedding,
-                                                               tf.squeeze(tf.reshape(self.encoder_batch, [-1, 1]),
+            encoder_embedding = embedding_ops.embedding_lookup(embedding, tf.squeeze(tf.reshape(self.encoder_batch, [-1, 1]),
                                                                           squeeze_dims=[1]))
             encoder_embedding = tf.reshape(encoder_embedding, [-1, max_encode_sent_len, config.embed_size])
-
-            # Tony decoder embedding we need to remove the last column
-            decoder_embedding = embedding_ops.embedding_lookup(embedding,
-                                                               tf.squeeze(tf.reshape(
-                                                                   self.decoder_batch[:, 0:max_decode_minus_one],
-                                                                   [-1, 1]), squeeze_dims=[1]))
-            decoder_embedding = tf.reshape(decoder_embedding, [batch_size, max_decode_minus_one, config.embed_size])
 
         with tf.variable_scope('seq2seq'):
             with tf.variable_scope('enc'):
@@ -54,7 +51,8 @@ class Word2Seq(object):
                 elif config.cell_type == "lstm":
                     cell_enc = tf.nn.rnn_cell.LSTMCell(cell_size, state_is_tuple=True)
                 else:
-                    raise ValueError("unknown cell type")
+                    print("WARNING: unknown cell type. Use Basic RNN as default")
+                    cell_enc = tf.nn.rnn_cell.BasicRNNCell(cell_size)
 
                 if config.keep_prob < 1.0:
                     cell_enc = rnn_cell.DropoutWrapper(cell_enc, output_keep_prob=config.keep_prob,
@@ -69,6 +67,12 @@ class Word2Seq(object):
                 if config.num_layer > 1:
                     encoder_last_state = encoder_last_state[-1]
 
+            # post process the decoder embedding inputs and encoder_last_state
+            # Tony decoder embedding we need to remove the last column
+            decoder_embedding, encoder_last_state = self.prepare_for_beam(embedding, encoder_last_state,
+                                                                          self.decoder_batch[:,
+                                                                          0:max_decode_minus_one])
+
             with tf.variable_scope('dec'):
 
                 if config.cell_type == "gru":
@@ -76,47 +80,32 @@ class Word2Seq(object):
                 elif config.cell_type == "lstm":
                     cell_dec = tf.nn.rnn_cell.LSTMCell(cell_size, state_is_tuple=True)
                 else:
-                    raise ValueError("unknown cell type")
+                    print("WARNING: unknown cell type. Use Basic RNN as default")
+                    cell_dec = tf.nn.rnn_cell.BasicRNNCell(cell_size)
 
-                decoder_embedding_list = tf.unpack(decoder_embedding, num=max_decode_minus_one, axis=1)
                 # output project to vocabulary size
                 cell_dec = tf.nn.rnn_cell.OutputProjectionWrapper(cell_dec, vocab_size)
 
                 # No back propagation and forward only for testing
-                if forward :
-                    if config.use_attention:
-                        dec_outputs, _ = tf.nn.seq2seq.attention_decoder(decoder_embedding_list,
-                                                                         initial_state=encoder_last_state,
-                                                                         attention_states=encoder_outputs,
-                                                                         cell=cell_dec,
-                                                                         loop_function=self._extract_argmax_and_embed(embedding))
-                    else:
-                        dec_outputs, _ = tf.nn.seq2seq.rnn_decoder(decoder_embedding_list,
-                                                                   initial_state=encoder_last_state,
-                                                                   cell=cell_dec,
-                                                                   loop_function=self._extract_argmax_and_embed(embedding))
-                # Training with back propagation
-                else:
-                    if config.use_attention:
-                        dec_outputs, _ = tf.nn.seq2seq.attention_decoder(decoder_embedding_list,
-                                                                         initial_state=encoder_last_state,
-                                                                         attention_states=encoder_outputs,
-                                                                         cell=cell_dec,
-                                                                         loop_function=None)
-                    else:
-                        dec_outputs, _ = tf.nn.seq2seq.rnn_decoder(decoder_embedding_list,
-                                                                   initial_state=encoder_last_state,
-                                                                   cell=cell_dec,
-                                                                   loop_function=None)
+                # run decoder to get sequence outputs
+                dec_outputs, beam_symbols, beam_path, log_beam_probs = self.beam_rnn_decoder(
+                    decoder_embedding=decoder_embedding,
+                    initial_state=encoder_last_state,
+                    embedding=embedding,
+                    cell=cell_dec)
 
-                self.logits_flat = tf.reshape(tf.pack(dec_outputs, 1), [-1, vocab_size])
+                self.logits = dec_outputs
+                self.beam_symbols = beam_symbols
+                self.beam_path = beam_path
+                self.log_beam_probs = log_beam_probs
+
+                logits_flat = tf.reshape(tf.pack(dec_outputs, 1), [-1, vocab_size])
                 # skip GO in the beginning
                 labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:], [-1, 1]), squeeze_dims=[1])
                 # mask out labels equals PAD_ID = 0
                 weights = tf.to_float(tf.sign(labels_flat))
-                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(self.logits_flat, labels_flat)
+                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
                 self.losses *= weights
-
                 self.loss_sum = tf.reduce_sum(self.losses)
                 self.real_loss = self.loss_sum / tf.reduce_sum(weights)
                 tf.scalar_summary('cross_entropy_loss', self.real_loss)
@@ -153,6 +142,53 @@ class Word2Seq(object):
                 variable_parametes *= dim.value
             total_parameters += variable_parametes
         print("Total number of trainble parameters is %d" % total_parameters)
+
+    def beam_rnn_decoder(self, decoder_embedding, initial_state, cell, embedding, scope=None):
+        """
+        :param decoder_inputs: B * max_enc_len
+        :param initial_state: B * cell_size
+        :param cell:
+        :param scope: the name scope
+        :return: decoder_outputs, the last decoder_state
+        """
+        beam_symbols, beam_path, log_beam_probs = [], [], []
+        loop_function = self.get_loop_function(embedding, self.vocab_size, beam_symbols, beam_path, log_beam_probs)
+        outputs, state = rnn_decoder(decoder_embedding, initial_state, cell, loop_function=loop_function, scope=scope)
+        return outputs, beam_symbols, beam_path, log_beam_probs
+
+    def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
+        if self.forward:
+            loop_function = beam_and_embed(embedding, self.beam_size,
+                                           num_symbol, beam_symbols,
+                                           beam_path, log_beam_probs)
+        else:
+            loop_function = None
+        return loop_function
+
+    def prepare_for_beam(self, embedding, initial_state, decoder_inputs):
+        """
+        Map the decoder inputs into embedding. If using beam search, also tile the inputs by beam_size times
+        """
+        _, seq_len = decoder_inputs.get_shape()
+        if self.forward:
+            # for beam search, we need to duplicate the input (GO symbols) by beam_size times
+            # the initial state is also tiled by beam_size times
+            emb_inp = []
+            for i in range(seq_len):
+                embed = embedding_ops.embedding_lookup(embedding, decoder_inputs[:, i])
+                embed = tf.reshape(tf.tile(embed, [1, self.beam_size]), [-1, self.word_embed_size])
+                emb_inp.append(embed)
+
+            if type(initial_state) is tf.nn.seq2seq.rnn_cell.LSTMStateTuple:
+                tile_c = tf.reshape(tf.tile(initial_state.c, [1, self.beam_size]), [-1, self.cell_size])
+                tile_h = tf.reshape(tf.tile(initial_state.h, [1, self.beam_size]), [-1, self.cell_size])
+                initial_state = tf.nn.seq2seq.rnn_cell.LSTMStateTuple(tile_c, tile_h)
+            else:
+                initial_state = tf.reshape(tf.tile(initial_state, [1, self.beam_size]), [-1, self.cell_size])
+        else:
+            emb_inp = [embedding_ops.embedding_lookup(embedding, decoder_inputs[:, i]) for i in range(seq_len)]
+
+        return emb_inp, initial_state
 
     def train(self, global_t, sess, train_feed):
         losses = []
@@ -213,84 +249,64 @@ class Word2Seq(object):
         print("%s loss %f and perplexity %f" % (name, valid_loss, np.exp(valid_loss)))
         return valid_loss
 
-    def rnn_decoder(self, decoder_inputs, initial_state, cell, loop_function=None, scope=None):
-        """
-        Args:
-            decoder_inputs: A list of 2D Tensors [batch_size x input_size].
-            initial_state: batch * cell_size
-        """
-        with variable_scope.variable_scope(scope or "rnn_decoder"):
-            state = initial_state
-            outputs = []
-            prev = None
-            for i, inp in enumerate(decoder_inputs):
-                if loop_function is not None and prev is not None:
-                    with variable_scope.variable_scope("loop_function", reuse=True):
-                        inp = loop_function(prev, i)
-                if i > 0:
-                    variable_scope.get_variable_scope().reuse_variables()
-                output, state = cell(inp, state)
-                outputs.append(output)
-                if loop_function is not None:
-                    prev = output
-            if loop_function is not None and loop_function.func_name is "beam_search":
-                with variable_scope.variable_scope("loop_function", reuse=True):
-                    loop_function(prev, len(decoder_inputs))
-
-        return outputs, state
-
-    def _extract_argmax_and_embed(self,embedding, output_projection=None,
-                                  update_embedding=False):
-        """Get a loop_function that extracts the previous symbol and embeds it.
-        Args:
-          embedding: embedding tensor for symbols.
-          output_projection: None or a pair (W, B). If provided, each fed previous
-            output will first be multiplied by W and added B.
-          update_embedding: Boolean; if False, the gradients will not propagate
-            through the embeddings.
-        Returns:
-          A loop function.
-        """
-
-        def loop_function(prev, _):
-            if output_projection is not None:
-                prev = nn_ops.xw_plus_b(
-                    prev, output_projection[0], output_projection[1])
-            prev_symbol = tf.argmax(prev, 1)
-            # Note that gradients will not propagate through the second parameter of
-            # embedding_lookup.
-            emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
-            if not update_embedding:
-                emb_prev = array_ops.stop_gradient(emb_prev)
-            return emb_prev
-
-        return loop_function
-
-
-    def get_predicted_sentence(self,input_sentence,vocab,train_feed,sess,model):
-
-        input_sent=train_feed.line_2_ids_util(input_sentence,vocab,train_feed.UNK_ID)
-        input_sent=np.expand_dims(input_sent,axis=0)
-
-        output_sent=np.array([train_feed.GO_ID] +  [train_feed.PAD_ID] * 13 + [train_feed.EOS_ID])
-        output_sent=np.expand_dims(output_sent,axis=0)
-        print(input_sent)
-       # embedding_input=embedding_ops.embedding_lookup(self.embedding,input_sent)
-       # embedding_output= embedding_ops.embedding_lookup(self.embedding,output_sent)
-        fetches=[self.logits_flat]
-        feed_dict = {self.encoder_batch: input_sent, self.decoder_batch: output_sent, self.encoder_lens: np.array([len(input_sent)])}
-        #   list of 2d tensor[bath size*vocab_size]
-        output_logits_flat=sess.run(fetches,feed_dict)
-        output_logits_flat = output_logits_flat[0]
-        outputs=[]
-        #Greedy decoder extract the best one
-        for idx in range(14):
-            selected_token_id = int(np.argmax(output_logits_flat[idx, :]))
-            if selected_token_id ==train_feed.EOS_ID:
+    def test(self, name, sess, test_feed, num_batch=None):
+        all_refs = []
+        all_n_bests = [] # 2D list. List of List of N-best
+        local_t = 0
+        fetch = [self.logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+        while True:
+            batch = test_feed.next_batch()
+            if batch is None or (num_batch is not None and local_t > num_batch):
                 break
-            else:
-                outputs.append(selected_token_id)
-        rev_vocab = {v:k for k, v in vocab.items()}
-        output_sentence= " ".join([rev_vocab[output] for output in outputs])
-        print (output_sentence)
-        return output_sentence
+            encoder_len, decoder_len, encoder_x, decoder_y = batch
+            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
+            pred, symbol, path, probs = sess.run(fetch, feed_dict)
+            # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
+            # label: [B x max_dec_len+1]
+
+            beam_symbols_matrix = np.array(symbol)
+            beam_path_matrix = np.array(path)
+            beam_log_matrix = np.array(probs)
+
+            for b_idx in range(test_feed.batch_size):
+                ref = list(decoder_y[b_idx, 1:])
+                # remove padding and EOS symbol
+                ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                # use lattic to find the N-best list
+                n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
+
+                all_refs.append(ref)
+                all_n_bests.append(n_best)
+
+            local_t += 1
+
+        # get error
+        return self.beam_error(all_refs, all_n_bests, name, test_feed.rev_vocab)
+
+    def beam_error(self, all_refs, all_n_best, name, rev_vocab):
+        all_bleu = []
+        for ref, n_best in zip(all_refs, all_n_best):
+            ref = [rev_vocab[word] for word in ref]
+            local_bleu = []
+            for score, best in n_best:
+                best = [rev_vocab[word] for word in best]
+                print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
+                try:
+                    local_bleu.append(bleu.sentence_bleu([ref], best))
+                except ZeroDivisionError:
+                    local_bleu.append(0.0)
+            print("*"*20)
+            all_bleu.append(local_bleu)
+
+        # begin evaluation of @n
+        reports = []
+        for b in range(self.beam_size):
+            avg_best_bleu = np.mean([np.max(local_bleu[0:b + 1]) for local_bleu in all_bleu])
+            record = "%s@%d BLEU %f" % (name, b + 1, float(avg_best_bleu))
+            reports.append(record)
+            print(record)
+
+        return reports
