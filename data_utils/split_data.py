@@ -126,8 +126,8 @@ class WordSeqCorpus(object):
             utterances.extend([" ".join(self.tokenizer(l.split("|||")[1])).lower() for l in movies[key]])
 
         total_size = len(utterances)
-        train_size = int(total_size * split_size[0] / 10)
-        valid_size = int(total_size * split_size[1] / 10)
+        train_size = int(total_size * split_size[0] / np.sum(split_size))
+        valid_size = int(total_size * split_size[1] / np.sum(split_size))
 
         content_xs = []
         content_ys = []
@@ -365,6 +365,7 @@ class UttSeqCorpus(object):
         if utt_features is None:
             with open(os.path.join(data_dir, data_name), "rb") as f:
                 utt_features = self._parse_file(f.readlines())
+        utt_features = utt_features[0:1000]
 
         self._create_corpus(utt_features, split_size)
 
@@ -451,8 +452,8 @@ class UttSeqCorpus(object):
     def _create_corpus(self, utt_features, split_size):
 
         total_size = len(utt_features)
-        train_size = int(total_size * split_size[0] / 10)
-        valid_size = int(total_size * split_size[1] / 10)
+        train_size = int(total_size * split_size[0] / np.sum(split_size))
+        valid_size = int(total_size * split_size[1] / np.sum(split_size))
 
         content_xs = []
         content_ys = []

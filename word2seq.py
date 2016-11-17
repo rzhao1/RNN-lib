@@ -6,6 +6,7 @@ import tensorflow as tf
 from data_utils.split_data import WordSeqCorpus
 from data_utils.data_feed import WordSeqDataFeed
 from models.seq2seq_nt import Word2Seq
+from config_utils import Word2SeqConfig
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
@@ -21,45 +22,18 @@ tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
 FLAGS = tf.app.flags.FLAGS
 
 
-class Config(object):
-    op = "sgd"
-    cell_type = "gru"
-    use_attention = True
-
-    # general config
-    grad_clip = 5.0
-    init_w = 0.05
-    batch_size = 30
-    embed_size = 150
-    cell_size = 500
-    num_layer = 1
-    max_epoch = 20
-
-    line_thres =2
-    max_decoder_size=15
-
-    # SGD training related
-    init_lr = 0.6
-    lr_hold = 1
-    lr_decay = 0.6
-    keep_prob = 1.0
-    improve_threshold = 0.996
-    patient_increase = 2.0
-    early_stop = True
-
-
 def main():
-    # load corpus
-    api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7,1,2], FLAGS.max_vocab_size,
-                        FLAGS.max_enc_len, FLAGS.max_dec_len, Config.line_thres)
-    corpus_data = api.get_corpus()
-
     # Load configuration
-    config = Config()
-    test_config = Config()
+    config = Word2SeqConfig()
+    test_config = Word2SeqConfig()
     test_config.keep_prob = 1.0
     test_config.batch_size = 200
     pp(config)
+
+    # load corpus
+    api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7,1,2], FLAGS.max_vocab_size,
+                        FLAGS.max_enc_len, FLAGS.max_dec_len, config.line_thres)
+    corpus_data = api.get_corpus()
 
     # convert to numeric input outputs that fits into TF models
     train_feed = WordSeqDataFeed("Train", config,corpus_data["train"], api.vocab)

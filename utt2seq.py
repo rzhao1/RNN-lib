@@ -17,14 +17,18 @@ tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use
 tf.app.flags.DEFINE_string("max_enc_len", 5, "The largest number of utterance in encoder")
 tf.app.flags.DEFINE_string("max_dec_len", 13, "The largest number of words in decoder")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
-tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
+tf.app.flags.DEFINE_bool("forward", True, "Do decoding only")
+tf.app.flags.DEFINE_string("test_path", "run1478720226", "the dir to load checkpoint for forward only")
+
 
 FLAGS = tf.app.flags.FLAGS
 
 
 def main():
+    config = Utt2SeqConfig()
+
     # load corpus
-    api = UttSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [7,1,2], FLAGS.max_vocab_size,
+    api = UttSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [98, 1, 1], FLAGS.max_vocab_size,
                        FLAGS.max_enc_len, FLAGS.max_dec_len)
     corpus_data = api.get_corpus()
 
@@ -36,10 +40,11 @@ def main():
     if not os.path.exists(FLAGS.work_dir):
         os.mkdir(FLAGS.work_dir)
 
-    log_dir = os.path.join(FLAGS.work_dir, "run1478668837") #+ str(int(time.time())))
-    if not os.path.exists(log_dir):
+    if FLAGS.forward:
+        log_dir = os.path.join(FLAGS.work_dir, FLAGS.test_path)
+    else:
+        log_dir = os.path.join(FLAGS.work_dir, "run" + str(int(time.time())))
         os.mkdir(log_dir)
-    config = Utt2SeqConfig()
 
     # for perplexity evaluation
     valid_config = Utt2SeqConfig()
@@ -57,12 +62,14 @@ def main():
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
             model = Utt2Seq(sess, config, vocab_size=len(train_feed.vocab), feature_size=train_feed.feat_size,
-                            max_decoder_size=train_feed.max_dec_size, log_dir=log_dir, forward=False)
+                            max_decoder_size=train_feed.max_dec_size, log_dir=None if FLAGS.forward else log_dir,
+                            forward=False)
 
         # for evaluation perplexity on VALID and TEST set
         with tf.variable_scope("model", reuse=True, initializer=initializer):
             valid_model = Utt2Seq(sess, valid_config, len(train_feed.vocab), train_feed.feat_size,
                                   train_feed.max_dec_size, None, False)
+
         # get a random batch and do forward decoding. Print the most likely response
         with tf.variable_scope("model", reuse=True, initializer=initializer):
             test_model = Utt2Seq(sess, valid_config, len(train_feed.vocab), train_feed.feat_size,
@@ -90,10 +97,6 @@ def main():
 
         for epoch in range(config.max_epoch):
             print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
-
-            # do sampling to see what kind of sentences is generated
-            test_feed.epoch_init(test_config.batch_size, shuffle=True)
-            test_model.test("TEST", sess, test_feed, 5)
 
             train_feed.epoch_init(config.batch_size, shuffle=True)
             global_t, train_loss = model.train(global_t, sess, train_feed)
