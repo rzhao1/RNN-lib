@@ -12,7 +12,7 @@ import nltk.translate.bleu_score as bleu
 
 
 class Utt2Seq(object):
-    def __init__(self, sess, config, vocab_size, feature_size, max_decoder_size, log_dir, forward):
+    def __init__(self, sess, config, vocab_size, feature_size, max_decoder_size, eos_id, log_dir, forward):
         self.batch_size = config.batch_size
         self.forward = forward
         self.utt_cell_size = utt_cell_size = config.cell_size
@@ -22,6 +22,7 @@ class Utt2Seq(object):
         self.beam_size = config.beam_size
         self.word_embed_size = config.embed_size
         self.is_lstm_cell = config.cell_type == "lstm"
+        self.eos_id = eos_id
 
         self.encoder_batch = tf.placeholder(dtype=tf.float32, shape=(None, None, feature_size), name="encoder_utts")
         self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, max_decoder_size), name="decoder_seq")
@@ -160,7 +161,8 @@ class Utt2Seq(object):
         if self.forward:
             loop_function = beam_and_embed(embedding, self.beam_size,
                                            num_symbol, beam_symbols,
-                                           beam_path, log_beam_probs)
+                                           beam_path, log_beam_probs,
+                                           self.eos_id)
         else:
             loop_function = None
         return loop_function

@@ -18,7 +18,7 @@ tf.app.flags.DEFINE_string("max_enc_len", 5, "The largest number of utterance in
 tf.app.flags.DEFINE_string("max_dec_len", 13, "The largest number of words in decoder")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
 tf.app.flags.DEFINE_bool("forward", True, "Do decoding only")
-tf.app.flags.DEFINE_string("test_path", "run1478720226", "the dir to load checkpoint for forward only")
+tf.app.flags.DEFINE_string("test_path", "run1479355167", "the dir to load checkpoint for forward only")
 
 
 FLAGS = tf.app.flags.FLAGS
@@ -111,7 +111,7 @@ def main():
 
                 # do sampling to see what kind of sentences is generated
                 test_feed.epoch_init(test_config.batch_size, shuffle=True)
-                test_model.test("TEST", sess, test_feed, 5)
+                test_model.test("TEST", sess, test_feed, 2)
 
                 done_epoch = epoch +1
 
@@ -140,7 +140,7 @@ def main():
         else:
             # do sampling to see what kind of sentences is generated
             test_feed.epoch_init(test_config.batch_size, shuffle=True)
-            test_model.test("TEST", sess, test_feed, num_batch=2)
+            test_model.test("TEST", sess, test_feed, num_batch=5)
 
             # begin validation
             valid_feed.epoch_init(valid_config.batch_size, shuffle=False)

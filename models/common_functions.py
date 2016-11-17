@@ -5,7 +5,7 @@ from tensorflow.python.ops import embedding_ops
 import tensorflow as tf
 
 
-def beam_and_embed(embedding, beam_size, num_symbols, beam_symbols, beam_path, log_beam_probs):
+def beam_and_embed(embedding, beam_size, num_symbols, beam_symbols, beam_path, log_beam_probs, EOS_ID):
 
     def beam_search(prev, i):
         # Compute
@@ -41,9 +41,8 @@ def beam_and_embed(embedding, beam_size, num_symbols, beam_symbols, beam_path, l
         symbols = indices % num_symbols  # Which word in vocabulary.
         beam_parent = indices // num_symbols  # Which hypothesis it came from.
 
-        # eos_mask = tf.expand_dims(tf.to_float(tf.equal(symbols, eos_tensor)), 1)
-        # best_probs += eos_mask * log_zero_tensor
-
+        eos_mask = tf.expand_dims(tf.to_float(tf.equal(symbols, EOS_ID)), 1)
+        best_probs += eos_mask * -100.0
         beam_symbols.append(symbols)
         beam_path.append(beam_parent)
         log_beam_probs.append(best_probs)
@@ -121,13 +120,14 @@ def get_n_best(beam_symbols, beam_path, beam_log, top_n, EOS_ID):
     results = []
 
     def _get_path(s_t, s_b):
-        _score = beam_log[s_t][s_b]
+        _score = beam_log[s_t][s_b][0]
         _ptr = s_b
         _path = []
         for _id in range(s_t, -1, -1):
             _path.append(beam_symbols[_id][_ptr])
             _ptr = beam_path[_id][_ptr]
             if _id > 0 and beam_symbols[_id-1][_ptr] == EOS_ID:
+                _score = -10000.0
                 break
         _path = _path[::-1]
         return _score, _path
