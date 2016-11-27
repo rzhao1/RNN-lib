@@ -286,21 +286,23 @@ class Utt2Seq(object):
             local_t += 1
 
         # get error
-        return self.beam_error(all_refs, all_n_bests, name, test_feed.rev_vocab)
+        return self.beam_error(all_refs, all_n_bests, name, test_feed.rev_vocab, num_batch is not None)
 
-    def beam_error(self, all_refs, all_n_best, name, rev_vocab):
+    def beam_error(self, all_refs, all_n_best, name, rev_vocab, verbose):
         all_bleu = []
         for ref, n_best in zip(all_refs, all_n_best):
             ref = [rev_vocab[word] for word in ref]
             local_bleu = []
             for score, best in n_best:
                 best = [rev_vocab[word] for word in best]
-                print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
+                if verbose:
+                    print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
                 try:
                     local_bleu.append(bleu.sentence_bleu([ref], best))
                 except ZeroDivisionError:
                     local_bleu.append(0.0)
-            print("*"*20)
+            if verbose:
+                print("*"*20)
             all_bleu.append(local_bleu)
 
         # begin evaluation of @n
