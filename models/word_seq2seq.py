@@ -17,7 +17,7 @@ class Word2Seq(object):
         self.batch_size = config.batch_size
         self.cell_size = cell_size = config.cell_size
         self.vocab_size = vocab_size
-        self.max_decoder_size = config.max_decoder_size
+        self.max_decoder_size = config.max_dec_len
         self.forward = forward
         self.beam_size = config.beam_size
         self.word_embed_size = config.embed_size
@@ -320,7 +320,7 @@ class Word2SeqAutoEncoder(object):
         self.batch_size = config.batch_size
         self.cell_size = cell_size = config.cell_size
         self.vocab_size = vocab_size
-        self.max_decoder_size = config.max_decoder_size
+        self.max_decoder_size = config.max_dec_len
         self.forward = forward
         self.beam_size = config.beam_size
         self.word_embed_size = config.embed_size
@@ -329,7 +329,7 @@ class Word2SeqAutoEncoder(object):
 
         self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="encoder_seq")
         # max_decoder_size including GO and EOS
-        self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, config.max_decoder_size), name="decoder_seq")
+        self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, self.max_decoder_size), name="decoder_seq")
         self.encoder_lens = tf.placeholder(dtype=tf.int32, shape=(None), name="encoder_lens")
 
         # include GO sent and EOS
@@ -385,6 +385,13 @@ class Word2SeqAutoEncoder(object):
                 # output project to vocabulary size
                 cell_dec = tf.nn.rnn_cell.OutputProjectionWrapper(cell_dec, vocab_size)
 
+                if config.keep_prob < 1.0:
+                    decoder_embedding = tf.nn.dropout(decoder_embedding, keep_prob=config.keep_prob)
+                    cell_dec = rnn_cell.DropoutWrapper(cell_dec, output_keep_prob=config.keep_prob)
+
+                if config.num_layer > 1:
+                    cell_dec = rnn_cell.MultiRNNCell([cell_dec] * config.num_layer, state_is_tuple=True)
+
                 # No back propagation and forward only for testing
                 # run decoder to get sequence outputs
                 dec_outputs, beam_symbols, beam_path, log_beam_probs = self.beam_rnn_decoder(
@@ -409,11 +416,20 @@ class Word2SeqAutoEncoder(object):
 
                 # output project to vocabulary size
                 cell_reconstruct = tf.nn.rnn_cell.OutputProjectionWrapper(cell_reconstruct, vocab_size)
-
                 # No back propagation and forward only for testing
-                reconstruct_input_embedding = tf.slice(encoder_embedding, [0, 1, 0], [-1, -1, -1])
-                self.reconstruct_logits, _ = rnn.dynamic_rnn(cell_reconstruct, encoder_last_state,
-                                                              self.encoder_lens-1, dtype=tf.float32)
+                reconstruct_embedding = tf.slice(encoder_embedding, [0, 1, 0], [-1, -1, -1])
+
+                if config.keep_prob < 1.0:
+                    reconstruct_embedding = tf.nn.dropout(reconstruct_embedding, keep_prob=config.keep_prob)
+                    cell_reconstruct = rnn_cell.DropoutWrapper(cell_reconstruct, output_keep_prob=config.keep_prob)
+
+                if config.num_layer > 1:
+                    cell_reconstruct = rnn_cell.MultiRNNCell([cell_reconstruct] * config.num_layer, state_is_tuple=True)
+
+                self.reconstruct_logits, _ = rnn.dynamic_rnn(cell_reconstruct, reconstruct_embedding,
+                                                             sequence_length=self.encoder_lens-1,
+                                                             initial_state=encoder_last_state,
+                                                             dtype=tf.float32)
 
             with tf.variable_scope("loss_calculation"):
                 # There are two loss. The decoder loss and reconstruction loss
@@ -421,7 +437,7 @@ class Word2SeqAutoEncoder(object):
                 decoder_labels = tf.slice(self.decoder_batch, [0, 1], [-1, -1])
                 decoder_weights = tf.to_float(tf.sign(decoder_labels))
 
-                reconstruct_labels = tf.slice(self.encoder_batch, [0, 1], [-1, 1])
+                reconstruct_labels = tf.slice(self.encoder_batch, [0, 1], [-1, -1])
                 reconstruct_weights = tf.to_float(tf.sign(reconstruct_labels))
 
                 decoder_loss = nn_ops.sparse_softmax_cross_entropy_with_logits(decoder_logits, decoder_labels)

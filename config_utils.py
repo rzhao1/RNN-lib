@@ -40,6 +40,8 @@ class Word2SeqConfig(object):
     beam_size = 5
 
     line_thres =2
+    max_dec_len = 30
+    max_enc_len = 30
 
     # SGD training related
     init_lr = 0.6
@@ -62,11 +64,13 @@ class Word2SeqAutoConfig(object):
     batch_size = 30
     embed_size = 300
     cell_size = 800
-    num_layer = 2
+    num_layer = 1
     max_epoch = 20
     beam_size = 5
 
     line_thres =2
+    max_dec_len = 30
+    max_enc_len = 30
 
     # SGD training related
     init_lr = 0.6

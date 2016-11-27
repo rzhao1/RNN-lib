@@ -14,8 +14,6 @@ tf.app.flags.DEFINE_string("data_file", "clean_data_ran.txt", "the file that con
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
-tf.app.flags.DEFINE_string("max_enc_len", 50, "The largest number of words in encoder")
-tf.app.flags.DEFINE_string("max_dec_len", 50, "The largest number of words in decoder")
 tf.app.flags.DEFINE_bool("save_model", False, "Create checkpoints")
 tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
 tf.app.flags.DEFINE_string("test_path", "run1478720226", "the dir to load checkpoint for forward only")
@@ -39,7 +37,7 @@ def main():
 
     # load corpus
     api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [98,1,1], FLAGS.max_vocab_size,
-                        FLAGS.max_enc_len, FLAGS.max_dec_len, config.line_thres)
+                        config.max_enc_len, config.max_dec_len, config.line_thres)
     corpus_data = api.get_corpus()
 
     # convert to numeric input outputs that fits into TF models

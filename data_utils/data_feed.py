@@ -25,7 +25,7 @@ class WordSeqDataFeed(object):
         self.vocab["UNK_"] = self.UNK_ID
         self.vocab["GO_"] = self.GO_ID
         self.vocab["EOS_"] = self.EOS_ID
-        self.max_decoder_size = config.max_decoder_size
+        self.max_decoder_size = config.max_dec_len
         # make sure we add 4 new special symbol
         assert len(self.vocab) == (len(vocab)+4)
         self.rev_vocab = {v:k for k, v in self.vocab.items()}
