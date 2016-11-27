@@ -56,12 +56,11 @@ class Word2SeqConfig(object):
 class Word2SeqAutoConfig(object):
     op = "adam"
     cell_type = "gru"
-    use_attention = True
 
     # general config
     grad_clip = 5.0
     init_w = 0.05
-    batch_size = 30
+    batch_size = 64
     embed_size = 300
     cell_size = 800
     num_layer = 1
@@ -73,10 +72,10 @@ class Word2SeqAutoConfig(object):
     max_enc_len = 30
 
     # SGD training related
-    init_lr = 0.6
+    init_lr = 0.002
     lr_hold = 1
     lr_decay = 0.6
-    keep_prob = 1.0
+    keep_prob = 0.7
     improve_threshold = 0.996
     patient_increase = 2.0
     early_stop = True

@@ -386,7 +386,6 @@ class Word2SeqAutoEncoder(object):
                 cell_dec = tf.nn.rnn_cell.OutputProjectionWrapper(cell_dec, vocab_size)
 
                 if config.keep_prob < 1.0:
-                    decoder_embedding = tf.nn.dropout(decoder_embedding, keep_prob=config.keep_prob)
                     cell_dec = rnn_cell.DropoutWrapper(cell_dec, output_keep_prob=config.keep_prob)
 
                 if config.num_layer > 1:
