@@ -416,7 +416,8 @@ class Word2SeqAutoEncoder(object):
                 # output project to vocabulary size
                 cell_reconstruct = tf.nn.rnn_cell.OutputProjectionWrapper(cell_reconstruct, vocab_size)
                 # No back propagation and forward only for testing
-                reconstruct_embedding = tf.slice(encoder_embedding, [0, 1, 0], [-1, -1, -1])
+                reconstruct_embedding = encoder_embedding[:, 0:-1, :]
+                    #tf.slice(encoder_embedding, [0, 0, 0], [-1, max_encode_sent_len-1, config.embed_size])
 
                 if config.keep_prob < 1.0:
                     reconstruct_embedding = tf.nn.dropout(reconstruct_embedding, keep_prob=config.keep_prob)
@@ -582,8 +583,6 @@ class Word2SeqAutoEncoder(object):
         decoder_losses = []
         reconstruct_losses = []
 
-        total_word_num = 0
-
         while True:
             batch = valid_feed.next_batch()
             if batch is None:
@@ -593,8 +592,6 @@ class Word2SeqAutoEncoder(object):
             fetches = [self.decoder_loss_avg, self.reconstruct_loss_avg]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
             decoder_loss, reconstruct_loss = sess.run(fetches, feed_dict)
-            total_word_num += np.sum(decoder_len-np.array(1)) # since we remove GO for prediction
-
             decoder_losses.append(decoder_loss)
             reconstruct_losses.append(reconstruct_loss)
 
@@ -602,8 +599,9 @@ class Word2SeqAutoEncoder(object):
         valid_dec_loss = np.mean(decoder_losses)
         valid_reconstruct_loss = np.mean(reconstruct_losses)
 
-        print("Valid decoder loss %f perleixty %f :: train reconstruct loss %f perleixty %f"
-              % (float(valid_dec_loss), np.exp(valid_dec_loss), float(valid_reconstruct_loss), np.exp(valid_reconstruct_loss)))
+        print("Valid decoder loss %f perleixty %f :: valid reconstruct loss %f perleixty %f"
+              % (float(valid_dec_loss), np.exp(valid_dec_loss),
+                 float(valid_reconstruct_loss), np.exp(valid_reconstruct_loss)))
         return valid_dec_loss
 
     def test(self, name, sess, test_feed, num_batch=None):

@@ -66,7 +66,7 @@ def main():
 
         # get a random batch and do forward decoding. Print the most likely response
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = Word2Seq(sess, test_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=False)
+            test_model = Word2Seq(sess, test_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=True)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
