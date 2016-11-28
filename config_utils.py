@@ -63,11 +63,11 @@ class Word2SeqAutoConfig(object):
     batch_size = 64
     embed_size = 300
     cell_size = 800
-    num_layer = 1
+    num_layer = 2
     max_epoch = 20
     beam_size = 5
 
-    line_thres =2
+    line_thres =4
     max_dec_len = 30
     max_enc_len = 30
 

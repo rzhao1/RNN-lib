@@ -326,6 +326,7 @@ class Word2SeqAutoEncoder(object):
         self.word_embed_size = config.embed_size
         self.is_lstm_cell = config.cell_type == "lstm"
         self.eos_id = eos_id
+        self.num_layer = config.num_layer
 
         self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="encoder_seq")
         # max_decoder_size including GO and EOS
@@ -523,12 +524,24 @@ class Word2SeqAutoEncoder(object):
                 embed = tf.reshape(tf.tile(embed, [1, self.beam_size]), [-1, self.word_embed_size])
                 emb_inp.append(embed)
 
-            if type(initial_state) is tf.nn.seq2seq.rnn_cell.LSTMStateTuple:
-                tile_c = tf.reshape(tf.tile(initial_state.c, [1, self.beam_size]), [-1, self.cell_size])
-                tile_h = tf.reshape(tf.tile(initial_state.h, [1, self.beam_size]), [-1, self.cell_size])
-                initial_state = tf.nn.seq2seq.rnn_cell.LSTMStateTuple(tile_c, tile_h)
+            if self.num_layer > 1:
+                states = []
+                for init_s in initial_state:
+                    if type(init_s) is tf.nn.seq2seq.rnn_cell.LSTMStateTuple:
+                        tile_c = tf.reshape(tf.tile(init_s.c, [1, self.beam_size]), [-1, self.cell_size])
+                        tile_h = tf.reshape(tf.tile(init_s.h, [1, self.beam_size]), [-1, self.cell_size])
+                        init_s = tf.nn.seq2seq.rnn_cell.LSTMStateTuple(tile_c, tile_h)
+                    else:
+                        init_s = tf.reshape(tf.tile(init_s, [1, self.beam_size]), [-1, self.cell_size])
+                    states.append(init_s)
+                initial_state = tuple(states)
             else:
-                initial_state = tf.reshape(tf.tile(initial_state, [1, self.beam_size]), [-1, self.cell_size])
+                if type(initial_state) is tf.nn.seq2seq.rnn_cell.LSTMStateTuple:
+                    tile_c = tf.reshape(tf.tile(initial_state.c, [1, self.beam_size]), [-1, self.cell_size])
+                    tile_h = tf.reshape(tf.tile(initial_state.h, [1, self.beam_size]), [-1, self.cell_size])
+                    initial_state = tf.nn.seq2seq.rnn_cell.LSTMStateTuple(tile_c, tile_h)
+                else:
+                    initial_state = tf.reshape(tf.tile(initial_state, [1, self.beam_size]), [-1, self.cell_size])
         else:
             emb_inp = [embedding_ops.embedding_lookup(embedding, decoder_inputs[:, i]) for i in range(seq_len)]
 

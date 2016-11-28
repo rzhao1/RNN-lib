@@ -13,8 +13,8 @@ tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus
 tf.app.flags.DEFINE_string("data_file", "clean_data_ran.txt", "the file that contains the raw data")
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
-tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
-tf.app.flags.DEFINE_bool("save_model", False, "Create checkpoints")
+tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use.")
+tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
 tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
 tf.app.flags.DEFINE_string("test_path", "run1478720226", "the dir to load checkpoint for forward only")
 
