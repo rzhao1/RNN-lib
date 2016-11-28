@@ -92,10 +92,6 @@ def main():
             for epoch in range(config.max_epoch):
                 print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
 
-                # do sampling to see what kind of sentences is generated
-                test_feed.epoch_init(test_config.batch_size, shuffle=True)
-                test_model.test("TEST", sess, test_feed, num_batch=2)
-
                 train_feed.epoch_init(config.batch_size, shuffle=True)
                 global_t, train_loss = model.train(global_t, sess, train_feed)
 
