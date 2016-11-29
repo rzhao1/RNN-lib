@@ -10,7 +10,7 @@ from config_utils import Word2SeqAutoConfig as Config
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
-tf.app.flags.DEFINE_string("data_file", "clean_data_ran.txt", "the file that contains the raw data")
+tf.app.flags.DEFINE_string("data_file", "open_subtitle.txt", "the file that contains the raw data")
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use.")
@@ -36,7 +36,7 @@ def main():
     pp(config)
 
     # load corpus
-    api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [98,1,1], FLAGS.max_vocab_size,
+    api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [99,0.5,0.5], FLAGS.max_vocab_size,
                         config.max_enc_len, config.max_dec_len, config.line_thres)
     corpus_data = api.get_corpus()
 

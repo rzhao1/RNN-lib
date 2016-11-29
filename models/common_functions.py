@@ -91,7 +91,7 @@ def rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None, scope=N
         outputs = []
         prev = None
         for i, inp in enumerate(decoder_inputs):
-            if loop_function is not None and prev is not None:
+            if loop_function is not None and prev is not None :
                 with variable_scope.variable_scope("loop_function", reuse=True):
                     inp = loop_function(prev, i)
             if i > 0:
@@ -100,6 +100,7 @@ def rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None, scope=N
             outputs.append(output)
             if loop_function is not None:
                 prev = output
+        # to obtain the beam symbols for the last timestamp
         if loop_function is not None and loop_function.func_name is "beam_search":
             with variable_scope.variable_scope("loop_function", reuse=True):
                 loop_function(prev, len(decoder_inputs))
@@ -121,6 +122,8 @@ def get_n_best(beam_symbols, beam_path, beam_log, top_n, EOS_ID):
 
     def _get_path(s_t, s_b):
         _score = beam_log[s_t][s_b][0]
+        if s_t < dec_len - 1:
+            _score += 100
         _ptr = s_b
         _path = []
         for _id in range(s_t, -1, -1):

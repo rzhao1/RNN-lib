@@ -346,6 +346,7 @@ class Word2SeqAutoEncoder(object):
             embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
             encoder_embedding = embedding_ops.embedding_lookup(embedding, tf.squeeze(tf.reshape(self.encoder_batch, [-1, 1]), squeeze_dims=[1]))
             encoder_embedding = tf.reshape(encoder_embedding, [-1, max_encode_sent_len, config.embed_size])
+            reconstruct_embedding = encoder_embedding[:, 0:-1, :]
 
         with tf.variable_scope('seq2seq'):
 
@@ -369,12 +370,12 @@ class Word2SeqAutoEncoder(object):
                                                                       sequence_length=self.encoder_lens,
                                                                       dtype=tf.float32)
 
-            # post process the decoder embedding inputs and encoder_last_state
-            # Tony decoder embedding we need to remove the last column
-            decoder_embedding, decoder_init_state = self.prepare_for_beam(embedding, encoder_last_state,
-                                                                          self.decoder_batch[:, 0:max_decode_minus_one])
-
             with tf.variable_scope('dec'):
+                # post process the decoder embedding inputs and encoder_last_state
+                # Tony decoder embedding we need to remove the last column
+                decoder_embedding, decoder_init_state = self.prepare_for_beam(embedding, encoder_last_state,
+                                                                              self.decoder_batch[:,
+                                                                              0:max_decode_minus_one])
                 if config.cell_type == "gru":
                     cell_dec = tf.nn.rnn_cell.GRUCell(cell_size)
                 elif config.cell_type == "lstm":
@@ -417,9 +418,6 @@ class Word2SeqAutoEncoder(object):
                 # output project to vocabulary size
                 cell_reconstruct = tf.nn.rnn_cell.OutputProjectionWrapper(cell_reconstruct, vocab_size)
                 # No back propagation and forward only for testing
-                reconstruct_embedding = encoder_embedding[:, 0:-1, :]
-                    #tf.slice(encoder_embedding, [0, 0, 0], [-1, max_encode_sent_len-1, config.embed_size])
-
                 if config.keep_prob < 1.0:
                     reconstruct_embedding = tf.nn.dropout(reconstruct_embedding, keep_prob=config.keep_prob)
                     cell_reconstruct = rnn_cell.DropoutWrapper(cell_reconstruct, output_keep_prob=config.keep_prob)
@@ -453,7 +451,8 @@ class Word2SeqAutoEncoder(object):
                 self.reconstruct_loss_sum = tf.reduce_sum(reconstruct_loss)
                 self.decoder_loss_avg = self.decoder_loss_sum / tf.reduce_sum(decoder_weights)
                 self.reconstruct_loss_avg = self.reconstruct_loss_sum / tf.reduce_sum(reconstruct_weights)
-                combine_loss = self.decoder_loss_avg + self.reconstruct_loss_avg
+                combine_loss = 0.7 * self.decoder_loss_avg + 0.3 * self.reconstruct_loss_avg
+                self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V2)
 
             if log_dir is not None:
                 # choose a optimizer
@@ -467,7 +466,6 @@ class Word2SeqAutoEncoder(object):
                 tvars = tf.trainable_variables()
                 grads, _ = tf.clip_by_global_norm(tf.gradients(combine_loss, tvars), config.grad_clip)
                 self.train_ops = optim.apply_gradients(zip(grads, tvars))
-                self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V1)
 
                 self.print_model_stats(tf.trainable_variables())
                 train_log_dir = os.path.join(log_dir, "train")
@@ -621,7 +619,7 @@ class Word2SeqAutoEncoder(object):
         all_refs = []
         all_n_bests = [] # 2D list. List of List of N-best
         local_t = 0
-        fetch = [self.decoder_logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+        fetch = [self.decoder_logits, self.beam_symbols, self.beam_path, self.log_beam_probs, self.reconstruct_logits]
         while True:
             batch = test_feed.next_batch()
             if batch is None or (num_batch is not None and local_t > num_batch):

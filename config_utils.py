@@ -58,21 +58,21 @@ class Word2SeqAutoConfig(object):
     cell_type = "gru"
 
     # general config
-    grad_clip = 5.0
+    grad_clip = 10.0
     init_w = 0.05
     batch_size = 64
     embed_size = 300
-    cell_size = 800
-    num_layer = 2
+    cell_size = 1200
+    num_layer = 1
     max_epoch = 20
     beam_size = 5
 
-    line_thres =4
-    max_dec_len = 30
-    max_enc_len = 30
+    line_thres =2
+    max_dec_len = 25
+    max_enc_len = 25
 
     # SGD training related
-    init_lr = 0.002
+    init_lr = 0.001
     lr_hold = 1
     lr_decay = 0.6
     keep_prob = 0.7
