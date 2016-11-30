@@ -4,20 +4,78 @@ class Utt2SeqConfig(object):
     use_attention = False
 
     # general config
-    grad_clip = 5.0
-    init_w = 0.05
-    batch_size = 20
-    clause_embed_size = 300
-    embed_size = 150
-    cell_size = 500
+    init_w = 0.08
+    batch_size = 50
+    clause_embed_size = 600
+    embed_size = 300
+    cell_size = 800
     num_layer = 2
     max_epoch = 20
+    beam_size = 20
+
+    # SGD training related
+    grad_clip = 5.0
+    init_lr = 0.5
+    lr_hold = 2
+    lr_decay = 0.9
+    keep_prob = 0.5
+    improve_threshold = 0.996
+    patient_increase = 2.0
+    early_stop = True
+
+
+class Word2SeqConfig(object):
+    op = "sgd"
+    cell_type = "gru"
+    use_attention = True
+
+    # general config
+    grad_clip = 5.0
+    init_w = 0.05
+    batch_size = 30
+    embed_size = 300
+    cell_size = 500
+    num_layer = 1
+    max_epoch = 20
+    beam_size = 5
+
+    line_thres =2
+    max_dec_len = 30
+    max_enc_len = 30
 
     # SGD training related
     init_lr = 0.6
     lr_hold = 1
     lr_decay = 0.6
-    keep_prob = 0.6
+    keep_prob = 1.0
+    improve_threshold = 0.996
+    patient_increase = 2.0
+    early_stop = True
+
+
+class Word2SeqAutoConfig(object):
+    op = "adam"
+    cell_type = "gru"
+
+    # general config
+    grad_clip = 10.0
+    init_w = 0.05
+    batch_size = 64
+    embed_size = 300
+    cell_size = 1200
+    num_layer = 1
+    max_epoch = 20
+    beam_size = 5
+
+    line_thres =2
+    max_dec_len = 25
+    max_enc_len = 25
+
+    # SGD training related
+    init_lr = 0.001
+    lr_hold = 1
+    lr_decay = 0.6
+    keep_prob = 0.7
     improve_threshold = 0.996
     patient_increase = 2.0
     early_stop = True

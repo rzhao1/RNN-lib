@@ -1,25 +1,28 @@
 import os
 import time
-from beeprint import pp
 import numpy as np
-from tensorflow.python.ops import nn_ops
-
 import tensorflow as tf
-import math
-from tensorflow.python.ops import embedding_ops, rnn_cell, rnn
+from tensorflow.python.ops import rnn_cell, rnn
+from common_functions import *
 
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import embedding_ops
 from tensorflow.python.ops import variable_scope
+import nltk.translate.bleu_score as bleu
 
 
 class Utt2Seq(object):
-    def __init__(self, sess, config, vocab_size, feature_size, max_decoder_size, log_dir, forward):
-        self.batch_size = batch_size = config.batch_size
+    def __init__(self, sess, config, vocab_size, feature_size, max_decoder_size, eos_id, log_dir, forward):
+        self.batch_size = config.batch_size
+        self.forward = forward
         self.utt_cell_size = utt_cell_size = config.cell_size
         self.vocab_size = vocab_size
         self.feature_size = feature_size
         self.max_decoder_size = max_decoder_size
+        self.beam_size = config.beam_size
+        self.word_embed_size = config.embed_size
+        self.is_lstm_cell = config.cell_type == "lstm"
+        self.eos_id = eos_id
 
         self.encoder_batch = tf.placeholder(dtype=tf.float32, shape=(None, None, feature_size), name="encoder_utts")
         self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, max_decoder_size), name="decoder_seq")
@@ -45,11 +48,6 @@ class Utt2Seq(object):
 
         with variable_scope.variable_scope("word-embedding"):
             embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
-            # Tony decoder embedding we need to remove the last column
-            decoder_embedding = embedding_ops.embedding_lookup(embedding,tf.squeeze(tf.reshape(
-                                                                   self.decoder_batch[:, 0:max_decode_minus_one],
-                                                                   [-1, 1]), squeeze_dims=[1]))
-            decoder_embedding = tf.reshape(decoder_embedding, [-1, max_decode_minus_one, config.embed_size])
 
         with tf.variable_scope('seq2seq'):
             with tf.variable_scope('enc'):
@@ -58,7 +56,8 @@ class Utt2Seq(object):
                 elif config.cell_type == "lstm":
                     cell_enc = tf.nn.rnn_cell.LSTMCell(utt_cell_size, state_is_tuple=True)
                 else:
-                    raise ValueError("unknown cell type")
+                    print("WARNING: unknown cell type. Use Basic RNN as default")
+                    cell_enc = tf.nn.rnn_cell.BasicRNNCell(utt_cell_size)
 
                 if config.keep_prob < 1.0:
                     cell_enc = rnn_cell.DropoutWrapper(cell_enc, output_keep_prob=config.keep_prob,
@@ -72,47 +71,35 @@ class Utt2Seq(object):
                 if config.num_layer > 1:
                     encoder_last_state = encoder_last_state[-1]
 
-            with tf.variable_scope('dec'):
+            # post process the decoder embedding inputs and encoder_last_state
+            # Tony decoder embedding we need to remove the last column
+            decoder_embedding, encoder_last_state = self.prepare_for_beam(embedding, encoder_last_state,
+                                                                     self.decoder_batch[:, 0:max_decode_minus_one])
+
+            with variable_scope.variable_scope('dec'):
                 if config.cell_type == "gru":
                     cell_dec = tf.nn.rnn_cell.GRUCell(utt_cell_size)
                 elif config.cell_type == "lstm":
                     cell_dec = tf.nn.rnn_cell.LSTMCell(utt_cell_size, state_is_tuple=True)
                 else:
-                    raise ValueError("unknown cell type")
+                    print("WARNING: unknown cell type. Use Basic RNN as default")
+                    cell_dec = tf.nn.rnn_cell.BasicRNNCell(utt_cell_size)
 
-                decoder_embedding_list = tf.unpack(decoder_embedding, num=max_decode_minus_one, axis=1)
                 # output project to vocabulary size
                 cell_dec = tf.nn.rnn_cell.OutputProjectionWrapper(cell_dec, vocab_size)
-                # No back propagation and forward only for testing
-                if forward:
-                    if config.use_attention:
-                        dec_outputs, _ = tf.nn.seq2seq.attention_decoder(decoder_embedding_list,
-                                                                         initial_state=encoder_last_state,
-                                                                         attention_states=encoder_outputs,
-                                                                         cell=cell_dec,
-                                                                         loop_function=self._extract_argmax_and_embed(
-                                                                             embedding))
-                    else:
-                        dec_outputs, _ = tf.nn.seq2seq.rnn_decoder(decoder_embedding_list,
-                                                                   initial_state=encoder_last_state,
-                                                                   cell=cell_dec,
-                                                                   loop_function=self._extract_argmax_and_embed(
-                                                                       embedding))
-                # Training with back propagation
-                else:
-                    if config.use_attention:
-                        dec_outputs, _ = tf.nn.seq2seq.attention_decoder(decoder_embedding_list,
-                                                                         initial_state=encoder_last_state,
-                                                                         attention_states=encoder_outputs,
-                                                                         cell=cell_dec,
-                                                                         loop_function=None)
-                    else:
-                        dec_outputs, _ = tf.nn.seq2seq.rnn_decoder(decoder_embedding_list,
-                                                                   initial_state=encoder_last_state,
-                                                                   cell=cell_dec,
-                                                                   loop_function=None)
+
+                # run decoder to get sequence outputs
+                dec_outputs, beam_symbols, beam_path, log_beam_probs = self.beam_rnn_decoder(
+                    decoder_embedding=decoder_embedding,
+                    initial_state=encoder_last_state,
+                    embedding = embedding,
+                    cell=cell_dec)
 
                 self.logits = dec_outputs
+                self.beam_symbols = beam_symbols
+                self.beam_path = beam_path
+                self.log_beam_probs = log_beam_probs
+
                 logits_flat = tf.reshape(tf.pack(dec_outputs, 1), [-1, vocab_size])
                 # skip GO in the beginning
                 labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:], [-1, 1]), squeeze_dims=[1])
@@ -145,34 +132,8 @@ class Utt2Seq(object):
                 print("Save summary to %s" % log_dir)
                 self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
 
-    def _extract_argmax_and_embed(self,embedding, output_projection=None,
-                                  update_embedding=False):
-        """Get a loop_function that extracts the previous symbol and embeds it.
-        Args:
-          embedding: embedding tensor for symbols.
-          output_projection: None or a pair (W, B). If provided, each fed previous
-            output will first be multiplied by W and added B.
-          update_embedding: Boolean; if False, the gradients will not propagate
-            through the embeddings.
-        Returns:
-          A loop function.
-        """
-
-        def loop_function(prev, _):
-            if output_projection is not None:
-                prev = nn_ops.xw_plus_b(
-                    prev, output_projection[0], output_projection[1])
-            prev_symbol = tf.argmax(prev, 1)
-            # Note that gradients will not propagate through the second parameter of
-            # embedding_lookup.
-            emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
-            if not update_embedding:
-                emb_prev = array_ops.stop_gradient(emb_prev)
-            return emb_prev
-
-        return loop_function
-
-    def print_model_stats(self, tvars):
+    @staticmethod
+    def print_model_stats(tvars):
         total_parameters = 0
         for variable in tvars:
             print("Trainable %s" % variable.name)
@@ -183,6 +144,54 @@ class Utt2Seq(object):
                 var_parameters *= dim.value
             total_parameters += var_parameters
         print("Total number of trainble parameters is %d" % total_parameters)
+
+    def beam_rnn_decoder(self, decoder_embedding, initial_state, cell, embedding, scope=None):
+        """
+        :param decoder_inputs: B * max_enc_len
+        :param initial_state: B * cell_size
+        :param cell:
+        :param scope: the name scope
+        :return: decoder_outputs, the last decoder_state
+        """
+        beam_symbols, beam_path, log_beam_probs = [], [], []
+        loop_function = self.get_loop_function(embedding, self.vocab_size, beam_symbols, beam_path, log_beam_probs)
+        outputs, state = rnn_decoder(decoder_embedding, initial_state, cell, loop_function=loop_function, scope=scope)
+        return outputs, beam_symbols, beam_path, log_beam_probs
+
+    def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
+        if self.forward:
+            loop_function = beam_and_embed(embedding, self.beam_size,
+                                           num_symbol, beam_symbols,
+                                           beam_path, log_beam_probs,
+                                           self.eos_id)
+        else:
+            loop_function = None
+        return loop_function
+
+    def prepare_for_beam(self, embedding, initial_state, decoder_inputs):
+        """
+        Map the decoder inputs into embedding. If using beam search, also tile the inputs by beam_size times
+        """
+        _, seq_len = decoder_inputs.get_shape()
+        if self.forward:
+            # for beam search, we need to duplicate the input (GO symbols) by beam_size times
+            # the initial state is also tiled by beam_size times
+            emb_inp = []
+            for i in range(seq_len):
+                embed = embedding_ops.embedding_lookup(embedding, decoder_inputs[:, i])
+                embed = tf.reshape(tf.tile(embed, [1, self.beam_size]), [-1, self.word_embed_size])
+                emb_inp.append(embed)
+
+            if type(initial_state) is tf.nn.seq2seq.rnn_cell.LSTMStateTuple:
+                tile_c = tf.reshape(tf.tile(initial_state.c, [1, self.beam_size]), [-1, self.utt_cell_size])
+                tile_h = tf.reshape(tf.tile(initial_state.h, [1, self.beam_size]), [-1, self.utt_cell_size])
+                initial_state = tf.nn.seq2seq.rnn_cell.LSTMStateTuple(tile_c, tile_h)
+            else:
+                initial_state = tf.reshape(tf.tile(initial_state, [1, self.beam_size]), [-1, self.utt_cell_size])
+        else:
+            emb_inp = [embedding_ops.embedding_lookup(embedding, decoder_inputs[:, i]) for i in range(seq_len)]
+
+        return emb_inp, initial_state
 
     def train(self, global_t, sess, train_feed):
         losses = []
@@ -243,42 +252,66 @@ class Utt2Seq(object):
         return valid_loss
 
     def test(self, name, sess, test_feed, num_batch=None):
-        """
-              No training is involved. Just forward path and compute the metrics
-              :param name: the name, usually TEST or VALID
-              :param sess: the tf session
-              :param test_feed: the data feed
-              :param num_batch: if None run for the whole feed. Otherwise stop when num_batch is reached
-              :return: average loss
-              """
+        all_refs = []
+        all_n_bests = [] # 2D list. List of List of N-best
         local_t = 0
-        predictions = []
-        labels = []
-
+        fetch = [self.logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
         while True:
             batch = test_feed.next_batch()
             if batch is None or (num_batch is not None and local_t > num_batch):
                 break
-
             encoder_len, decoder_len, encoder_x, decoder_y = batch
-            fetches = [self.logits]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
-            logits = sess.run(fetches, feed_dict)
-            max_ids = np.squeeze(np.array(logits), axis=0)
-            max_ids = np.argmax(np.transpose(max_ids, [1,0,2]), axis=2)
+            pred, symbol, path, probs = sess.run(fetch, feed_dict)
+            # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
+            # label: [B x max_dec_len+1]
+
+            beam_symbols_matrix = np.array(symbol)
+            beam_path_matrix = np.array(path)
+            beam_log_matrix = np.array(probs)
+
+            for b_idx in range(test_feed.batch_size):
+                ref = list(decoder_y[b_idx, 1:])
+                # remove padding and EOS symbol
+                ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                # use lattic to find the N-best list
+                n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
+
+                all_refs.append(ref)
+                all_n_bests.append(n_best)
+
             local_t += 1
 
-            for b_id in range(test_feed.batch_size):
-                sent_ids = max_ids[b_id]
-                label_ids = decoder_y[b_id, 0:decoder_len[b_id]-1]
+        # get error
+        return self.beam_error(all_refs, all_n_bests, name, test_feed.rev_vocab, num_batch is not None)
 
-                first_eos = np.argwhere(sent_ids == test_feed.EOS_ID)
-                if len(first_eos) > 0:
-                    sent_ids = sent_ids[0:first_eos[0][0]]
-                pred = " ".join([test_feed.rev_vocab[w_id] for w_id in sent_ids])
-                label = " ".join([test_feed.rev_vocab[w_id] for w_id in label_ids])
-                print("LABEL >> %s ||| MODEL >> %s" % (label, pred))
-                predictions.append(pred)
-                labels.append(label)
-        return predictions, labels
+    def beam_error(self, all_refs, all_n_best, name, rev_vocab, verbose):
+        all_bleu = []
+        for ref, n_best in zip(all_refs, all_n_best):
+            ref = [rev_vocab[word] for word in ref]
+            local_bleu = []
+            for score, best in n_best:
+                best = [rev_vocab[word] for word in best]
+                if verbose:
+                    print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
+                try:
+                    local_bleu.append(bleu.sentence_bleu([ref], best))
+                except ZeroDivisionError:
+                    local_bleu.append(0.0)
+            if verbose:
+                print("*"*20)
+            all_bleu.append(local_bleu)
+
+        # begin evaluation of @n
+        reports = []
+        for b in range(self.beam_size):
+            avg_best_bleu = np.mean([np.max(local_bleu[0:b + 1]) for local_bleu in all_bleu])
+            record = "%s@%d BLEU %f" % (name, b + 1, float(avg_best_bleu))
+            reports.append(record)
+            print(record)
+
+        return reports
 
