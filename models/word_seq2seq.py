@@ -616,10 +616,11 @@ class Word2SeqAutoEncoder(object):
         return valid_dec_loss
 
     def test(self, name, sess, test_feed, num_batch=None):
+        all_srcs = []
         all_refs = []
         all_n_bests = [] # 2D list. List of List of N-best
         local_t = 0
-        fetch = [self.decoder_logits, self.beam_symbols, self.beam_path, self.log_beam_probs, self.reconstruct_logits]
+        fetch = [self.decoder_logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
         while True:
             batch = test_feed.next_batch()
             if batch is None or (num_batch is not None and local_t > num_batch):
@@ -636,7 +637,9 @@ class Word2SeqAutoEncoder(object):
 
             for b_idx in range(test_feed.batch_size):
                 ref = list(decoder_y[b_idx, 1:])
+                src = list(encoder_x[b_idx, :])
                 # remove padding and EOS symbol
+                src = [s for s in src if s != test_feed.PAD_ID]
                 ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
                 b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
                 b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
@@ -644,19 +647,22 @@ class Word2SeqAutoEncoder(object):
                 # use lattic to find the N-best list
                 n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
 
+                all_srcs.append(src)
                 all_refs.append(ref)
                 all_n_bests.append(n_best)
 
             local_t += 1
 
         # get error
-        return self.beam_error(all_refs, all_n_bests, name, test_feed.rev_vocab)
+        return self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
 
-    def beam_error(self, all_refs, all_n_best, name, rev_vocab):
+    def beam_error(self, all_srcs, all_refs, all_n_best, name, rev_vocab):
         all_bleu = []
-        for ref, n_best in zip(all_refs, all_n_best):
+        for src, ref, n_best in zip(all_srcs, all_refs, all_n_best):
+            src = [rev_vocab[word] for word in src]
             ref = [rev_vocab[word] for word in ref]
             local_bleu = []
+            print("Source>> %s" % " ".join(src))
             for score, best in n_best:
                 best = [rev_vocab[word] for word in best]
                 print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))

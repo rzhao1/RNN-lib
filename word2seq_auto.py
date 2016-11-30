@@ -15,8 +15,9 @@ tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results direc
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
+tf.app.flags.DEFINE_bool("resume", True, "Resume training from the ckp at test_path")
 tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
-tf.app.flags.DEFINE_string("test_path", "run1478720226", "the dir to load checkpoint for forward only")
+tf.app.flags.DEFINE_string("test_path", "run1480404404", "the dir to load checkpoint for forward only")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -48,7 +49,7 @@ def main():
     if not os.path.exists(FLAGS.work_dir):
         os.mkdir(FLAGS.work_dir)
 
-    if FLAGS.forward:
+    if FLAGS.forward or FLAGS.resume:
         log_dir = os.path.join(FLAGS.work_dir, FLAGS.test_path)
     else:
         log_dir = os.path.join(FLAGS.work_dir, "run" + str(int(time.time())))
@@ -80,16 +81,20 @@ def main():
             os.mkdir(ckp_dir)
 
         ckpt = tf.train.get_checkpoint_state(ckp_dir)
+        base_epoch = 0
 
         if ckpt:
             print("Reading models parameters from %s" % ckpt.model_checkpoint_path)
+            sess.run(tf.initialize_all_variables())
             model.saver.restore(sess, ckpt.model_checkpoint_path)
+            base_epoch = int(ckpt.model_checkpoint_path.split("-")[1]) + 1
+            print("Resume from epoch %d" % base_epoch)
         else:
             print("Created models with fresh parameters.")
             sess.run(tf.initialize_all_variables())
 
         if not FLAGS.forward:
-            for epoch in range(config.max_epoch):
+            for epoch in range(base_epoch, config.max_epoch):
                 print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
 
                 train_feed.epoch_init(config.batch_size, shuffle=True)
@@ -132,8 +137,8 @@ def main():
             print("Done training")
         else:
             # do sampling to see what kind of sentences is generated
-            test_feed.epoch_init(test_config.batch_size, shuffle=True)
-            test_model.test("TEST", sess, test_feed, num_batch=2)
+            test_feed.epoch_init(test_config.batch_size, shuffle=False)
+            test_model.test("TEST", sess, test_feed, num_batch=20)
 
             # begin validation
             valid_feed.epoch_init(valid_config.batch_size, shuffle=False)

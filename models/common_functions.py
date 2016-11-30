@@ -3,7 +3,7 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import embedding_ops
 import tensorflow as tf
-
+import numpy as np
 
 def beam_and_embed(embedding, beam_size, num_symbols, beam_symbols, beam_path, log_beam_probs, EOS_ID):
 
@@ -27,7 +27,8 @@ def beam_and_embed(embedding, beam_size, num_symbols, beam_symbols, beam_path, l
             probs = tf.reshape(probs + log_beam_probs[-1], [-1, beam_size * num_symbols])
         else:
             probs = tf.reshape(probs, [-1, beam_size * num_symbols])
-            probs = probs[:, 0:num_symbols] # discard the other beams for the first time step
+            # discard the other beams for the first time step
+            probs = probs[:, 0:num_symbols] #+ tf.log(tf.range(1, 20005, dtype=tf.float32) * 10.4803)
         # for i == 1, probs has shape batch_size * number_symbol
         # for i > 1, probs has shape batch_size * [beam_size*num_symbol]
 
@@ -43,6 +44,8 @@ def beam_and_embed(embedding, beam_size, num_symbols, beam_symbols, beam_path, l
 
         eos_mask = tf.expand_dims(tf.to_float(tf.equal(symbols, EOS_ID)), 1)
         best_probs += eos_mask * -100.0
+
+        # save to list
         beam_symbols.append(symbols)
         beam_path.append(beam_parent)
         log_beam_probs.append(best_probs)
@@ -91,7 +94,7 @@ def rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None, scope=N
         outputs = []
         prev = None
         for i, inp in enumerate(decoder_inputs):
-            if loop_function is not None and prev is not None :
+            if loop_function is not None and prev is not None:
                 with variable_scope.variable_scope("loop_function", reuse=True):
                     inp = loop_function(prev, i)
             if i > 0:
@@ -152,5 +155,9 @@ def get_n_best(beam_symbols, beam_path, beam_log, top_n, EOS_ID):
                 path = clean_up(path)
                 if path:
                     results.append((score, path))
+                # check if all beam died
+                if np.all(beam_symbols[t_id, :] == EOS_ID):
+                    break
+
     sorted_results = sorted(results, reverse=True)
     return sorted_results[0:top_n]
