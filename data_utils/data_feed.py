@@ -346,3 +346,129 @@ class UttSeqDataFeed(object):
         else:
             return None
 
+
+class HybridSeqDataFeed(object):
+    # iteration related
+    """
+    Use case:
+    epoch_init(batch_size=20, shuffle=True)
+    next_batch() to get the next bactch. The end of batch is None
+    """
+    ptr = 0
+    batch_size = 0
+    num_batch = None
+    batch_indexes = None
+    PAD_ID = 0
+    UNK_ID = 1
+    GO_ID = 2
+    CONTINUE_ID =3
+    EOS_ID = 4
+
+    def __init__(self, name, config, data, api):
+        self.name = name
+        # plus 5 is because of the 4 built-in words PAD, UNK, GO, CONTINUE and EOS
+        self.vocab = {word: idx+5 for idx, word in enumerate(api.vocab)}
+        self.vocab["PAD_"] = self.PAD_ID
+        self.vocab["UNK_"] = self.UNK_ID
+        self.vocab["GO_"] = self.GO_ID
+        self.vocab["CONT_"] = self.CONTINUE_ID
+        self.vocab["EOS_"] = self.EOS_ID
+        self.max_encoder_size = config.max_enc_size
+        self.max_decoder_size = config.max_dec_size
+        # make sure we add 4 new special symbol
+        assert len(self.vocab) == (len(api.vocab)+5)
+        self.rev_vocab = {v:k for k, v in self.vocab.items()}
+        self.id_xs, self.id_ys = data
+
+        # convert movie profile to ids
+        self.id_profile = {}
+        for key, profile in api.movie_profile.items():
+            temp = {w: c for w, c in profile}
+            self.id_profile[key] = [temp.get(w, 0) for w in self.vocab]
+
+        # convert data into ids
+        self.id_lines = []
+        for key, speaker, utt in api.data_lines:
+            self.id_lines.append((key, speaker, self.line_2_ids(utt)))
+
+        all_lens = [len(self.id_lines[line_id][2]) for line_id in self.id_ys]
+        self.indexes = list(np.argsort(all_lens))
+        self.data_size = len(self.id_xs)
+        print("%s feed loads %d samples" % (name, self.data_size))
+
+    def line_2_ids(self, line):
+        return [self.vocab.get(word, self.UNK_ID) for word in line.split()]
+
+    def _shuffle(self):
+        np.random.shuffle(self.batch_indexes)
+
+    def _prepare_batch(self,selected_index):
+        # return: profile_mask, context_x, context_len, prev_x, prev_len, decoder_y
+        # profile_mask B*V
+        # context_x B*C*MAX_ENC
+        # prev_x B*MAX_ENC
+        max_enc_len = self.max_encoder_size
+        max_dec_len = self.max_decoder_size
+
+        x_rows = [self.id_xs[idx] for idx in selected_index]
+        y_rows = [self.id_ys[idx] for idx in selected_index]
+
+        # break down y labels
+        x_context, x_prev_utt, x_prev_spk = [], [], []
+        for ctx, prev in x_rows:
+            x_context.append([self.id_lines[idx][2][0:max_enc_len] for idx in ctx])
+            x_prev_utt.append(self.id_lines[prev][2][0:max_enc_len])
+            x_prev_spk.append(self.id_lines[prev][1])
+
+        # break down y labels
+        y_keys, y_speakers, y_utts = [], [], []
+        for y_id in y_rows:
+            key, spk, utt = self.id_lines[y_id]
+            y_keys.append(key)
+            y_speakers.append(spk)
+            y_utts.append(utt[0:max_dec_len-2])
+
+        # get profile
+        y_profile = [self.id_profile[key] for key in y_keys]
+        context_len = np.array([len(row) for row in x_context], dtype=np.int32)
+        prev_len = np.array([len(row) for row in x_prev_utt], dtype=np.int32)
+        max_context_len = np.max(context_len)
+
+        profile_x = np.array(y_profile, dtype=np.int32)
+        context_x = np.zeros((self.batch_size, max_context_len, max_enc_len), dtype=np.int32)
+        prev_x = np.zeros((self.batch_size, max_enc_len), dtype=np.int32)
+        decoder_y = np.zeros((self.batch_size, max_dec_len), dtype=np.int32)
+
+        for b_id in range(self.batch_size):
+            for c_id, c_x in enumerate(x_context[b_id]):
+                context_x[b_id, c_id, 0:len(c_x)] = c_x
+
+            prev_x[b_id, 0:len(x_prev_utt[b_id])] = x_prev_utt[b_id]
+            # decide if GO or CONT
+            begin_symbol = self.GO_ID if x_prev_spk[b_id] != y_speakers[b_id] else self.CONTINUE_ID
+            decoder_y[b_id, 0:len(y_utts[b_id])+2] = [begin_symbol] + y_utts[b_id] + [self.EOS_ID]
+
+        return profile_x, context_len, prev_len, context_x, prev_x, decoder_y
+
+    def epoch_init(self, batch_size, shuffle=True):
+        # create batch indexes for computation efficiency
+        self.ptr = 0
+        self.batch_size = batch_size
+        self.num_batch = self.data_size // batch_size
+        self.batch_indexes = []
+        for i in range(self.num_batch):
+            self.batch_indexes.append(self.indexes[i * self.batch_size:(i + 1) * self.batch_size])
+        if shuffle:
+            self._shuffle()
+
+        print("%s begins with %d batches" % (self.name, self.num_batch))
+
+    def next_batch(self):
+        if self.ptr < self.num_batch:
+            selected_ids = self.batch_indexes[self.ptr]
+            self.ptr += 1
+            return self._prepare_batch(selected_index=selected_ids)
+        else:
+            return None
+
+
