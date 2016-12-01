@@ -80,6 +80,7 @@ class Word2SeqAutoConfig(object):
     patient_increase = 2.0
     early_stop = True
 
+
 class HybridSeqConfig(object):
     op = "adam"
     cell_type = "gru"
@@ -93,7 +94,7 @@ class HybridSeqConfig(object):
     context_cell_size = 600
     num_layer = 1
     max_epoch = 20
-    beam_size = 5
+    beam_size = 20
 
     context_size = 10
     max_enc_size = 50
@@ -104,6 +105,33 @@ class HybridSeqConfig(object):
     lr_hold = 1
     lr_decay = 0.6
     keep_prob = 0.7
+    improve_threshold = 0.996
+    patient_increase = 2.0
+    early_stop = True
+
+
+class FutureSeqConfig(object):
+    op = "adam"
+    cell_type = "gru"
+
+    # general config
+    grad_clip = 10.0
+    init_w = 0.05
+    batch_size = 64
+    embed_size = 300
+    cell_size = 800
+    num_layer = 1
+    max_epoch = 20
+    beam_size = 20
+
+    max_utt_size = 30
+    context_size = 5
+
+    # SGD training related
+    init_lr = 0.001
+    lr_hold = 1
+    lr_decay = 0.6
+    keep_prob = 0.8
     improve_threshold = 0.996
     patient_increase = 2.0
     early_stop = True

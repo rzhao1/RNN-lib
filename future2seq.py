@@ -3,10 +3,10 @@ import time
 from beeprint import pp
 import numpy as np
 import tensorflow as tf
-from data_utils.split_data import HybridSeqCorpus
-from data_utils.data_feed import HybridSeqDataFeed
-from models.clause_seq2seq import Hybrid2Seq
-from config_utils import HybridSeqConfig as Config
+from data_utils.split_data import FutureSeqCorpus
+from data_utils.data_feed import FutureSeqDataFeed
+from models.word_seq2seq import Future2Seq
+from config_utils import FutureSeqConfig as Config
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
@@ -15,9 +15,9 @@ tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results direc
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
-tf.app.flags.DEFINE_bool("resume", True, "Resume training from the ckp at test_path")
+tf.app.flags.DEFINE_bool("resume", False, "Resume training from the ckp at test_path")
 tf.app.flags.DEFINE_bool("forward", True, "Do decoding only")
-tf.app.flags.DEFINE_string("test_path", "run1480489253", "the dir to load checkpoint for forward only")
+tf.app.flags.DEFINE_string("test_path", "run1480574994", "the dir to load checkpoint for forward only")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -37,13 +37,14 @@ def main():
     pp(config)
 
     # load corpus
-    api = HybridSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [98, 1, 1], FLAGS.max_vocab_size, config.context_size)
+    api = FutureSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [98, 1, 1], FLAGS.max_vocab_size, config.context_size)
     corpus_data = api.get_corpus()
 
+
     # convert to numeric input outputs that fits into TF models
-    train_feed = HybridSeqDataFeed("Train", config,corpus_data["train"], api)
-    valid_feed = HybridSeqDataFeed("Valid", config,corpus_data["valid"], api)
-    test_feed = HybridSeqDataFeed("Test", config,corpus_data["test"], api)
+    train_feed = FutureSeqDataFeed("Train", config,corpus_data["train"], api)
+    valid_feed = FutureSeqDataFeed("Valid", config,corpus_data["valid"], api)
+    test_feed = FutureSeqDataFeed("Test", config,corpus_data["test"], api)
 
     if not os.path.exists(FLAGS.work_dir):
         os.mkdir(FLAGS.work_dir)
@@ -58,15 +59,15 @@ def main():
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
-            model = Hybrid2Seq(sess, config, len(train_feed.vocab), train_feed.EOS_ID,
+            model = Future2Seq(sess, config, len(train_feed.vocab), train_feed.EOS_ID,
                                         log_dir=None if FLAGS.forward else log_dir, forward=False)
 
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            valid_model = Hybrid2Seq(sess, valid_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=False)
+            valid_model = Future2Seq(sess, valid_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=False)
 
         # get a random batch and do forward decoding. Print the most likely response
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = Hybrid2Seq(sess, test_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=True)
+            test_model = Future2Seq(sess, test_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=True)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 

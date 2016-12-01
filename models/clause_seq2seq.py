@@ -429,8 +429,9 @@ class Hybrid2Seq(object):
                 decoder_loss *= decoder_weights
 
                 # get final losses
-                self.loss_sum = tf.reduce_sum(decoder_loss)
-                self.loss_avg = self.loss_sum / tf.reduce_sum(decoder_weights)
+                loss_sum = tf.reduce_sum(decoder_loss, reduction_indices=1)
+                batch_avg_loss = tf.reduce_sum(loss_sum / tf.reduce_sum(decoder_weights, reduction_indices=1))
+                self.loss_avg = batch_avg_loss / float(self.batch_size)
                 self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V2)
 
             if log_dir is not None:
@@ -443,7 +444,7 @@ class Hybrid2Seq(object):
                     optim = tf.train.GradientDescentOptimizer(self.learning_rate)
 
                 tvars = tf.trainable_variables()
-                grads, _ = tf.clip_by_global_norm(tf.gradients(self.loss_avg, tvars), config.grad_clip)
+                grads, _ = tf.clip_by_global_norm(tf.gradients(batch_avg_loss, tvars), config.grad_clip)
                 self.train_ops = optim.apply_gradients(zip(grads, tvars))
 
                 self.print_model_stats(tf.trainable_variables())
@@ -586,6 +587,7 @@ class Hybrid2Seq(object):
                 ref = list(decoder_y[b_idx, 1:])
                 src = list(prev_x[b_idx])
                 # remove padding and EOS symbol
+                src = [s for s in src if s != test_feed.PAD_ID]
                 ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
                 b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
                 b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]

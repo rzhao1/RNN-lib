@@ -378,7 +378,6 @@ class HybridSeqDataFeed(object):
         # make sure we add 4 new special symbol
         assert len(self.vocab) == (len(api.vocab)+5)
         self.rev_vocab = {v:k for k, v in self.vocab.items()}
-        self.id_xs, self.id_ys = data
 
         # convert movie profile to ids
         self.id_profile = {}
@@ -390,6 +389,12 @@ class HybridSeqDataFeed(object):
         self.id_lines = []
         for key, speaker, utt in api.data_lines:
             self.id_lines.append((key, speaker, self.line_2_ids(utt)))
+
+        self.id_xs, self.id_ys = [], []
+        for x, y in zip(data[0], data[1]):
+            if len(self.id_lines[y][2]) > 5:
+                self.id_xs.append(x)
+                self.id_ys.append(y)
 
         all_lens = [len(self.id_lines[line_id][2]) for line_id in self.id_ys]
         self.indexes = list(np.argsort(all_lens))
@@ -421,15 +426,13 @@ class HybridSeqDataFeed(object):
             x_prev_spk.append(self.id_lines[prev][1])
 
         # break down y labels
-        y_keys, y_speakers, y_utts = [], [], []
+        y_profile, y_speakers, y_utts = [], [], []
         for y_id in y_rows:
             key, spk, utt = self.id_lines[y_id]
-            y_keys.append(key)
+            y_profile.append(self.id_profile[key])
             y_speakers.append(spk)
             y_utts.append(utt[0:max_dec_len-2])
 
-        # get profile
-        y_profile = [self.id_profile[key] for key in y_keys]
         context_len = np.array([len(row) for row in x_context], dtype=np.int32)
         prev_len = np.array([len(row) for row in x_prev_utt], dtype=np.int32)
         max_context_len = np.max(context_len)
@@ -471,4 +474,100 @@ class HybridSeqDataFeed(object):
         else:
             return None
 
+
+class FutureSeqDataFeed(object):
+    # iteration related
+    """
+    Use case:
+    epoch_init(batch_size=20, shuffle=True)
+    next_batch() to get the next bactch. The end of batch is None
+    """
+    ptr = 0
+    batch_size = 0
+    num_batch = None
+    batch_indexes = None
+    PAD_ID = 0
+    UNK_ID = 1
+    GO_ID = 2
+    EOS_ID = 3
+
+    def __init__(self, name, config, data, api):
+        self.name = name
+        # plus 5 is because of the 4 built-in words PAD, UNK, GO, CONTINUE and EOS
+        self.vocab = {word: idx+4 for idx, word in enumerate(api.vocab)}
+        self.vocab["PAD_"] = self.PAD_ID
+        self.vocab["UNK_"] = self.UNK_ID
+        self.vocab["GO_"] = self.GO_ID
+        self.vocab["EOS_"] = self.EOS_ID
+        self.max_utt_size = config.max_utt_size
+        # make sure we add 4 new special symbol
+        assert len(self.vocab) == (len(api.vocab)+4)
+        self.rev_vocab = {v:k for k, v in self.vocab.items()}
+
+        # convert data into ids
+        self.id_lines = []
+        for key, speaker, utt in api.data_lines:
+            self.id_lines.append((key, speaker, self.line_2_ids(utt)))
+
+        self.id_xyz = data
+
+        self.indexes = range(len(self.id_xyz))
+        self.data_size = len(self.id_xyz)
+        print("%s feed loads %d samples" % (name, self.data_size))
+
+    def line_2_ids(self, line):
+        return [self.vocab.get(word, self.UNK_ID) for word in line.split()]
+
+    def _shuffle(self):
+        np.random.shuffle(self.batch_indexes)
+
+    def _prepare_batch(self,selected_index):
+        # return: profile_mask, context_x, context_len, prev_x, prev_len, decoder_y
+        # profile_mask B*V
+        # context_x B*C*MAX_ENC
+        # prev_x B*MAX_ENC
+        xyz_rows = [self.id_xyz[idx] for idx in selected_index]
+
+        # break down y labels
+        x_utts, y_utts, z_utts = [], [], []
+        for context, x, y, z in xyz_rows:
+            x_utts.append(self.id_lines[x][2][0:self.max_utt_size])
+            y_utts.append(self.id_lines[y][2][0:self.max_utt_size-2])
+            z_utts.append(self.id_lines[z][2][0:self.max_utt_size])
+
+        batch_x_len = np.array([len(row) for row in x_utts], dtype=np.int32)
+        batch_y_len = np.array([len(row) for row in y_utts], dtype=np.int32)
+        batch_z_len = np.array([len(row) for row in z_utts], dtype=np.int32)
+
+        x_batch = np.zeros((self.batch_size, np.max(batch_x_len)), dtype=np.int32)
+        y_batch = np.zeros((self.batch_size, self.max_utt_size), dtype=np.int32)
+        z_batch = np.zeros((self.batch_size, np.max(batch_z_len)), dtype=np.int32)
+
+        for b_id in range(self.batch_size):
+            x_batch[b_id, 0:len(x_utts[b_id])] = x_utts[b_id]
+            y_batch[b_id, 0:len(y_utts[b_id])+2] = [self.GO_ID] + y_utts[b_id] + [self.EOS_ID]
+            z_batch[b_id, 0:len(z_utts[b_id])] = z_utts[b_id]
+
+        return batch_x_len, batch_y_len, batch_z_len, x_batch, y_batch, z_batch
+
+    def epoch_init(self, batch_size, shuffle=True):
+        # create batch indexes for computation efficiency
+        self.ptr = 0
+        self.batch_size = batch_size
+        self.num_batch = self.data_size // batch_size
+        self.batch_indexes = []
+        for i in range(self.num_batch):
+            self.batch_indexes.append(self.indexes[i * self.batch_size:(i + 1) * self.batch_size])
+        if shuffle:
+            self._shuffle()
+
+        print("%s begins with %d batches" % (self.name, self.num_batch))
+
+    def next_batch(self):
+        if self.ptr < self.num_batch:
+            selected_ids = self.batch_indexes[self.ptr]
+            self.ptr += 1
+            return self._prepare_batch(selected_index=selected_ids)
+        else:
+            return None
 
