@@ -99,7 +99,7 @@ def gumbel_sample_and_embed(embedding, gumble_symbols, max_gumbel_noise=1.0):
 
 
 # this RNN decoder supports beam search. The built-in RNN decoder from tensorflow seq2seq does NOT.
-def rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None, scope=None):
+def rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None, scope=None, return_all_states=False):
     """
     Args:
         decoder_inputs: A list of 2D Tensors [batch_size x input_size].
@@ -108,6 +108,7 @@ def rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None, scope=N
     with variable_scope.variable_scope(scope or "rnn_decoder"):
         state = initial_state
         outputs = []
+        states = []
         prev = None
         for i, inp in enumerate(decoder_inputs):
             if loop_function is not None and prev is not None:
@@ -119,12 +120,17 @@ def rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None, scope=N
             outputs.append(output)
             if loop_function is not None:
                 prev = output
+            if return_all_states:
+                states.append(state)
         # to obtain the beam symbols for the last timestamp
         if loop_function is not None and loop_function.func_name is "beam_search":
             with variable_scope.variable_scope("loop_function", reuse=True):
                 loop_function(prev, len(decoder_inputs))
 
-    return outputs, state
+    if return_all_states:
+        return outputs, states
+    else:
+        return outputs, state
 
 
 def get_n_best(beam_symbols, beam_path, beam_log, top_n, EOS_ID):

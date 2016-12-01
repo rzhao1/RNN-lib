@@ -692,3 +692,180 @@ class HybridSeqCorpus(object):
                 "valid": (self.valid_x, self.valid_y),
                 "test": (self.test_x, self.test_y)}
 
+
+class FutureSeqCorpus(object):
+    train_data = None
+    valid_data = None
+    test_data = None
+    data_lines = None
+
+    # class variable
+    vocab = None
+    movie_profile = None
+
+    def __init__(self, data_dir, data_name, split_size, max_vocab_size, context_size):
+
+        self._data_dir = data_dir
+        self._data_name = data_name
+        self._cache_dir = os.path.join(data_dir, data_name.replace(".txt", "_") + "future_seq_split")
+        if not os.path.exists(self._cache_dir):
+            os.mkdir(self._cache_dir)
+
+        self.tokenizer = WordPunctTokenizer().tokenize
+        self.split_size = split_size
+        self.max_vocab_size = max_vocab_size
+        self.context_size = context_size
+        # try to load from existing file
+        if not self.load_data():
+            with open(os.path.join(data_dir, data_name), "rb") as f:
+                self._parse_file(f.readlines(), split_size)
+
+        # get vocabulary\
+        self.vocab = self.get_vocab()
+
+        self.print_stats("TRAIN", self.train_data)
+        self.print_stats("VALID", self.valid_data)
+        self.print_stats("TEST", self.test_data)
+
+    def get_vocab(self):
+        # get vocabulary dictionary
+        all_words = []
+        for _, _, utt in self.data_lines:
+            all_words.extend(utt.split())
+
+        vocab_cnt = Counter(all_words).most_common()
+        vocab = [w for w, cnt in vocab_cnt]
+        cnts = [cnt for w, cnt in vocab_cnt]
+        total = float(np.sum(cnts))
+        valid = float(np.sum(cnts[0:self.max_vocab_size]))
+        print("Raw vocab cnt %d with valid ratio %f" % (len(cnts), valid/total))
+        return vocab[0:self.max_vocab_size]
+
+    def print_stats(self, name, data):
+        print ('%s data %d lines' % (name, len(data)))
+        x_len = [len(self.data_lines[x][2].split()) for ctx, x, y, z in data]
+        print ('%s x avg len %.2f max len %.2f of %d lines' % (name, np.mean(x_len), np.max(x_len), len(x_len)))
+        y_len = [len(self.data_lines[y][2].split()) for ctx, x, y, z in data]
+        print ('%s y avg len %.2f max len %.2f of %d lines' % (name, np.mean(y_len), np.max(y_len), len(y_len)))
+
+
+    def _parse_file(self, lines, split_size):
+        """
+        :param lines: Each line is a line from the file
+        """
+        data_lines = []
+        movies = {}
+
+        current_movie = []
+        current_name = []
+        for line in lines:
+            if "FILE_NAME" in line:
+                if current_movie:
+                    movies[current_name] = current_movie
+                current_name = line.strip()
+                current_movie = []
+            else:
+                current_movie.append(line.strip())
+        if current_movie:
+            movies[current_name] = current_movie
+
+        # shuffle movie here.
+        shuffle_keys = movies.keys()
+        np.random.shuffle(shuffle_keys)
+        for key in shuffle_keys:
+            for line in movies[key]:
+                speaker = line.split("|||")[0]
+                utt = " ".join(self.tokenizer(line.split("|||")[1])).lower()
+                data_lines.append([key, speaker, utt])
+
+        content = []
+        movie_word_cnt = {}
+        # Pointer for decoder input
+        print("Begin creating data")
+        idx = 0
+        while True:
+
+            if idx >= len(data_lines):
+                break
+
+            key, speaker, utt = data_lines[idx]
+            # x include: the previous utterance id and context
+            # y include: the current utterance id
+            # z include: the next uttearnce id
+            # find the previous utt. If this is the first/second utt, we ignore this line
+            if idx < 2 or data_lines[idx-1][0] != key or data_lines[idx-2][0] != key:
+                idx += 1
+                continue
+            # too late
+            if idx == len(data_lines)-1 or data_lines[idx+1][0] != key:
+                idx += 1
+                continue
+
+            context_utt = []
+            for t_id in range(idx-2, np.maximum(-1, idx-self.context_size-2), -1):
+                if data_lines[t_id][0] != key:
+                    break
+                context_utt.append(t_id)
+
+            context_utt = context_utt[::-1]
+            content.append((context_utt, idx - 1, idx, idx +1))
+            idx += 2
+
+        total_size = len(content)
+        train_size = int(total_size * split_size[0] / np.sum(split_size))
+        valid_size = int(total_size * split_size[1] / np.sum(split_size))
+
+        # count the words
+        self.data_lines = data_lines
+        # split the data
+        self.train_data = content[0: train_size]
+        self.valid_data = content[train_size: train_size + valid_size]
+        self.test_data = content[train_size + valid_size:]
+
+        # begin dumpping data to file
+        self.dump_data("lines.txt", self.data_lines)
+        self.dump_data("train.txt", self.train_data)
+        self.dump_data("valid.txt", self.valid_data)
+        self.dump_data("test.txt", self.test_data)
+
+    def dump_data(self, file_name, data):
+        if os.path.exists(file_name):
+            raise ValueError("File already exists. Abort dumping")
+        print("Dumping to %s with %d lines" % (file_name, len(data)))
+        with open(os.path.join(self._cache_dir, file_name), "wb") as f:
+            if type(data) is list:
+                for line in data:
+                    f.write(json.dumps(line) + "\n")
+            else:
+                f.write(json.dumps(data))
+
+    def load_data(self):
+        if not os.path.exists(os.path.join(self._cache_dir, "train.txt")):
+            return False
+
+        def load_file(file_name):
+            with open(os.path.join(self._cache_dir, file_name), "rb") as f:
+                lines = f.readlines()
+                lines = [json.loads(l.strip()) for l in lines]
+            return lines
+
+        def load_dict(file_name):
+            with open(os.path.join(self._cache_dir, file_name), "rb") as f:
+                lines = f.readlines()
+            return json.loads(lines[0].strip())
+
+        print("Loaded from cache")
+        self.data_lines = load_file("lines.txt")
+        self.train_data = load_file("train.txt")
+        self.valid_data = load_file("valid.txt")
+        self.test_data = load_file("test.txt")
+        return True
+
+    def get_corpus(self):
+        """
+        :return: the corpus in train/valid/test
+        """
+        return {"train": self.train_data,
+                "valid": self.valid_data,
+                "test": self.test_data}
+
