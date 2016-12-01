@@ -78,11 +78,12 @@ def main():
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
+
         global_t = 0
         patience = 10  # wait for at least 10 epoch before consider early stop
         valid_loss_threshold = np.inf
         best_valid_loss = np.inf
-        checkpoint_path = os.path.join(ckp_dir, "utt2seq.ckpt")
+        checkpoint_path = os.path.join(ckp_dir, model.__class__.__name__ + ".ckpt")
 
         if not os.path.exists(ckp_dir):
             os.mkdir(ckp_dir)
@@ -95,6 +96,11 @@ def main():
         else:
             print("Created models with fresh parameters.")
             sess.run(tf.initialize_all_variables())
+
+        # dump log file to the log_dir
+        if not FLAGS.forward:
+            with open(os.path.join(log_dir, "meta.txt"), "wb") as f:
+                f.write(pp(config, output=False))
 
         if not FLAGS.forward:
             for epoch in range(config.max_epoch):

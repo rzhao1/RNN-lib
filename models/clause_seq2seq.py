@@ -331,6 +331,7 @@ class Hybrid2Seq(object):
         self.word_embed_size = config.embed_size
         self.is_lstm_cell = config.cell_type == "lstm"
         self.eos_id = eos_id
+        self.loop_function = config.loop_function
 
         self.profile = tf.placeholder(dtype=tf.int32, shape=(None, vocab_size), name="background")
 
@@ -481,10 +482,15 @@ class Hybrid2Seq(object):
 
     def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
         if self.forward:
-            loop_function = beam_and_embed(embedding, self.beam_size,
-                                           num_symbol, beam_symbols,
-                                           beam_path, log_beam_probs,
-                                           self.eos_id)
+            if self.loop_function == "beam":
+                loop_function = beam_and_embed(embedding, self.beam_size,
+                                               num_symbol, beam_symbols,
+                                               beam_path, log_beam_probs,
+                                               self.eos_id)
+            elif self.loop_function == "gumble":
+                loop_function = gumbel_sample_and_embed(embedding, beam_symbols)
+            else:
+                loop_function = extract_argmax_and_embed(embedding, beam_symbols)
         else:
             loop_function = None
         return loop_function
@@ -568,7 +574,11 @@ class Hybrid2Seq(object):
         all_srcs = []
         all_n_bests = [] # 2D list. List of List of N-best
         local_t = 0
-        fetch = [self.logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+        if self.loop_function == "beam":
+            fetch = [self.logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+        else:
+            fetch = [self.beam_symbols]
+
         while True:
             batch = test_feed.next_batch()
             if batch is None or (num_batch is not None and local_t > num_batch):
@@ -576,29 +586,50 @@ class Hybrid2Seq(object):
             profile_x, context_len, prev_len, context_x, prev_x, decoder_y = batch
             feed_dict = {self.profile: profile_x, self.context_len: context_len, self.prev_len: prev_len,
                          self.context_batch: context_x, self.prev_utt: prev_x, self.decoder_batch: decoder_y}
-            pred, symbol, path, probs = sess.run(fetch, feed_dict)
-            # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
-            # label: [B x max_dec_len+1]
 
-            beam_symbols_matrix = np.array(symbol)
-            beam_path_matrix = np.array(path)
-            beam_log_matrix = np.array(probs)
+            outputs = sess.run(fetch, feed_dict)
 
-            for b_idx in range(test_feed.batch_size):
-                ref = list(decoder_y[b_idx, 1:])
-                src = list(prev_x[b_idx])
-                # remove padding and EOS symbol
-                src = [s for s in src if s != test_feed.PAD_ID]
-                ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
-                b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                # use lattic to find the N-best list
-                n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
+            if self.loop_function == "beam":
+                pred, symbol, path, probs = sess.run(fetch, feed_dict)
+                # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
+                # label: [B x max_dec_len+1]
 
-                all_srcs.append(src)
-                all_refs.append(ref)
-                all_n_bests.append(n_best)
+                beam_symbols_matrix = np.array(symbol)
+                beam_path_matrix = np.array(path)
+                beam_log_matrix = np.array(probs)
+
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(decoder_y[b_idx, 1:])
+                    src = list(prev_x[b_idx])
+                    # remove padding and EOS symbol
+                    src = [s for s in src if s != test_feed.PAD_ID]
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    # use lattic to find the N-best list
+                    n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
+
+                    all_srcs.append(src)
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
+            else:
+                beam_symbols_matrix = np.array(outputs[0]).T
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(decoder_y[b_idx, 1:])
+                    src = list(prev_x[b_idx, :])
+                    # remove padding and EOS symbol
+                    src = [s for s in src if s != test_feed.PAD_ID]
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[b_idx, :].tolist()
+                    # use lattic to find the N-best list
+                    if test_feed.EOS_ID in b_beam_symbol:
+                        n_best = [(1.0, b_beam_symbol[0:b_beam_symbol.index(test_feed.EOS_ID)])]
+                    else:
+                        n_best = [(1.0, b_beam_symbol)]
+                    all_srcs.append(src)
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
 
             local_t += 1
 

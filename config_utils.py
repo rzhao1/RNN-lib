@@ -85,6 +85,7 @@ class Word2SeqAutoConfig(object):
 class HybridSeqConfig(object):
     op = "adam"
     cell_type = "gru"
+    loop_function = "gumble"
 
     # general config
     grad_clip = 10.0
@@ -96,7 +97,7 @@ class HybridSeqConfig(object):
     context_cell_size = 600
     num_layer = 1
     max_epoch = 20
-    beam_size = 20
+    beam_size = 5
 
     context_size = 10
     max_enc_size = 50

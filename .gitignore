@@ -96,3 +96,5 @@ Data/
 scirpts/*.json
 *.txt
 CornellData/
+old_logs/
+seq_working/

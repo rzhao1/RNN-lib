@@ -137,7 +137,7 @@ def main():
         else:
             # do sampling to see what kind of sentences is generated
             test_feed.epoch_init(test_config.batch_size, shuffle=True)
-            test_model.test("TEST", sess, test_feed, num_batch=20)
+            test_model.test("TEST", sess, test_feed, num_batch=100)
 
             # begin validation
             valid_feed.epoch_init(valid_config.batch_size, shuffle=False)

@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 from data_utils.split_data import WordSeqCorpus
 from data_utils.data_feed import WordSeqDataFeed
-from models.word_seq2seq import Word2Seq2Auto
+from models.word_seq2seq import Word2SeqAutoEncoder as Model
 from config_utils import Word2SeqAutoConfig as Config
 
 # constants
@@ -17,7 +17,7 @@ tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
 tf.app.flags.DEFINE_bool("resume", False, "Resume training from the ckp at test_path")
 tf.app.flags.DEFINE_bool("forward", True, "Do decoding only")
-tf.app.flags.DEFINE_string("test_path", "run1480546494", "the dir to load checkpoint for forward only")
+tf.app.flags.DEFINE_string("test_path", "run1480312659", "the dir to load checkpoint for forward only")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -55,19 +55,24 @@ def main():
         log_dir = os.path.join(FLAGS.work_dir, "run" + str(int(time.time())))
         os.mkdir(log_dir)
 
+    # dump log file to the log_dir
+    if not FLAGS.forward:
+        with open(os.path.join(log_dir, "meta.txt"), "wb") as f:
+            f.write(pp(config, output=False))
+
     # begin training
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
         with tf.variable_scope("model", reuse=None, initializer=initializer):
-            model = Word2Seq2Auto(sess, config, len(train_feed.vocab), train_feed.EOS_ID,
+            model = Model(sess, config, len(train_feed.vocab), train_feed.EOS_ID,
                                         log_dir=None if FLAGS.forward else log_dir, forward=False)
 
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            valid_model = Word2Seq2Auto(sess, valid_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=False)
+            valid_model = Model(sess, valid_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=False)
 
         # get a random batch and do forward decoding. Print the most likely response
         with tf.variable_scope("model", reuse=True, initializer=initializer):
-            test_model = Word2Seq2Auto(sess, test_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=True)
+            test_model = Model(sess, test_config, len(train_feed.vocab), train_feed.EOS_ID, None, forward=True)
 
         ckp_dir = os.path.join(log_dir, "checkpoints")
 
@@ -75,7 +80,7 @@ def main():
         patience = 10  # wait for at least 10 epoch before consider early stop
         valid_loss_threshold = np.inf
         best_valid_loss = np.inf
-        checkpoint_path = os.path.join(ckp_dir, "word2seq.ckpt")
+        checkpoint_path = os.path.join(ckp_dir, model.__class__.__name__ + ".ckpt")
 
         if not os.path.exists(ckp_dir):
             os.mkdir(ckp_dir)

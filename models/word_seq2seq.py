@@ -11,7 +11,87 @@ from tensorflow.python.ops import variable_scope
 import nltk.translate.bleu_score as bleu
 
 
-class Word2Seq(object):
+class BaseWord2Seq(object):
+    forward = None
+    loop_function = None
+    beam_size = None
+    eos_id = 0
+    vocab_size = None
+    beam_symbols = None
+    beam_path = None
+    log_beam_probs = None
+
+    def beam_rnn_decoder(self, decoder_embedding, initial_state, cell, embedding, scope=None, return_all_states=False):
+        """
+        :param decoder_inputs: B * max_enc_len
+        :param initial_state: B * cell_size
+        :param cell:
+        :param scope: the name scope
+        :return: decoder_outputs, the last decoder_state
+        """
+        beam_symbols, beam_path, log_beam_probs = [], [], []
+        loop_function = self.get_loop_function(embedding, self.vocab_size, beam_symbols, beam_path, log_beam_probs)
+        outputs, states = rnn_decoder(decoder_embedding, initial_state, cell, loop_function=loop_function, scope=scope,
+                                     return_all_states=return_all_states)
+        return outputs, beam_symbols, beam_path, log_beam_probs, states
+
+    def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
+        if self.forward:
+            if self.loop_function == "beam":
+                loop_function = beam_and_embed(embedding, self.beam_size,
+                                               num_symbol, beam_symbols,
+                                               beam_path, log_beam_probs,
+                                               self.eos_id)
+            elif self.loop_function == "gumble":
+                loop_function = gumbel_sample_and_embed(embedding, beam_symbols)
+            else:
+                loop_function = extract_argmax_and_embed(embedding, beam_symbols)
+        else:
+            loop_function = None
+        return loop_function
+
+    def beam_error(self, all_srcs, all_refs, all_n_best, name, rev_vocab):
+        all_bleu = []
+        for src, ref, n_best in zip(all_srcs, all_refs, all_n_best):
+            src = [rev_vocab[word] for word in src]
+            ref = [rev_vocab[word] for word in ref]
+            local_bleu = []
+            print("Source>> %s" % " ".join(src))
+            for score, best in n_best:
+                best = [rev_vocab[word] for word in best]
+                print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
+                try:
+                    local_bleu.append(bleu.sentence_bleu([ref], best))
+                except ZeroDivisionError:
+                    local_bleu.append(0.0)
+            print("*"*20)
+            all_bleu.append(local_bleu)
+
+        # begin evaluation of @n
+        reports = []
+        for b in range(self.beam_size):
+            avg_best_bleu = np.mean([np.max(local_bleu[0:b + 1]) for local_bleu in all_bleu])
+            record = "%s@%d BLEU %f" % (name, b + 1, float(avg_best_bleu))
+            reports.append(record)
+            print(record)
+
+        return reports
+
+    @staticmethod
+    def print_model_stats(tvars):
+        total_parameters = 0
+        for variable in tvars:
+            print("Trainable %s" % variable.name)
+            # shape is an array of tf.Dimension
+            shape = variable.get_shape()
+            variable_parametes = 1
+            for dim in shape:
+                variable_parametes *= dim.value
+            total_parameters += variable_parametes
+        print("Total number of trainble parameters is %d" % total_parameters)
+
+
+class Word2Seq(BaseWord2Seq):
 
     def __init__(self, sess, config, vocab_size, eos_id, log_dir=None, forward=False):
         self.batch_size = config.batch_size
@@ -89,7 +169,7 @@ class Word2Seq(object):
 
                 # No back propagation and forward only for testing
                 # run decoder to get sequence outputs
-                dec_outputs, beam_symbols, beam_path, log_beam_probs = self.beam_rnn_decoder(
+                dec_outputs, beam_symbols, beam_path, log_beam_probs, states = self.beam_rnn_decoder(
                     decoder_embedding=decoder_embedding,
                     initial_state=encoder_last_state,
                     embedding=embedding,
@@ -130,42 +210,6 @@ class Word2Seq(object):
                 train_log_dir = os.path.join(log_dir, "train")
                 print("Save summary to %s" % log_dir)
                 self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
-
-    @staticmethod
-    def print_model_stats(tvars):
-        total_parameters = 0
-        for variable in tvars:
-            print("Trainable %s" % variable.name)
-            # shape is an array of tf.Dimension
-            shape = variable.get_shape()
-            variable_parametes = 1
-            for dim in shape:
-                variable_parametes *= dim.value
-            total_parameters += variable_parametes
-        print("Total number of trainble parameters is %d" % total_parameters)
-
-    def beam_rnn_decoder(self, decoder_embedding, initial_state, cell, embedding, scope=None):
-        """
-        :param decoder_inputs: B * max_enc_len
-        :param initial_state: B * cell_size
-        :param cell:
-        :param scope: the name scope
-        :return: decoder_outputs, the last decoder_state
-        """
-        beam_symbols, beam_path, log_beam_probs = [], [], []
-        loop_function = self.get_loop_function(embedding, self.vocab_size, beam_symbols, beam_path, log_beam_probs)
-        outputs, state = rnn_decoder(decoder_embedding, initial_state, cell, loop_function=loop_function, scope=scope)
-        return outputs, beam_symbols, beam_path, log_beam_probs
-
-    def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
-        if self.forward:
-            loop_function = beam_and_embed(embedding, self.beam_size,
-                                           num_symbol, beam_symbols,
-                                           beam_path, log_beam_probs,
-                                           self.eos_id)
-        else:
-            loop_function = None
-        return loop_function
 
     def prepare_for_beam(self, embedding, initial_state, decoder_inputs):
         """
@@ -288,33 +332,8 @@ class Word2Seq(object):
         # get error
         return self.beam_error(all_refs, all_n_bests, name, test_feed.rev_vocab)
 
-    def beam_error(self, all_refs, all_n_best, name, rev_vocab):
-        all_bleu = []
-        for ref, n_best in zip(all_refs, all_n_best):
-            ref = [rev_vocab[word] for word in ref]
-            local_bleu = []
-            for score, best in n_best:
-                best = [rev_vocab[word] for word in best]
-                print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
-                try:
-                    local_bleu.append(bleu.sentence_bleu([ref], best))
-                except ZeroDivisionError:
-                    local_bleu.append(0.0)
-            print("*"*20)
-            all_bleu.append(local_bleu)
 
-        # begin evaluation of @n
-        reports = []
-        for b in range(self.beam_size):
-            avg_best_bleu = np.mean([np.max(local_bleu[0:b + 1]) for local_bleu in all_bleu])
-            record = "%s@%d BLEU %f" % (name, b + 1, float(avg_best_bleu))
-            reports.append(record)
-            print(record)
-
-        return reports
-
-
-class Word2SeqAutoEncoder(object):
+class Word2SeqAutoEncoder(BaseWord2Seq):
 
     def __init__(self, sess, config, vocab_size, eos_id, log_dir=None, forward=False):
         self.batch_size = config.batch_size
@@ -327,6 +346,7 @@ class Word2SeqAutoEncoder(object):
         self.is_lstm_cell = config.cell_type == "lstm"
         self.eos_id = eos_id
         self.num_layer = config.num_layer
+        self.loop_function = config.loop_function
 
         self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="encoder_seq")
         # max_decoder_size including GO and EOS
@@ -395,7 +415,7 @@ class Word2SeqAutoEncoder(object):
 
                 # No back propagation and forward only for testing
                 # run decoder to get sequence outputs
-                dec_outputs, beam_symbols, beam_path, log_beam_probs = self.beam_rnn_decoder(
+                dec_outputs, beam_symbols, beam_path, log_beam_probs, states = self.beam_rnn_decoder(
                     decoder_embedding=decoder_embedding,
                     initial_state=decoder_init_state,
                     embedding=embedding,
@@ -471,42 +491,6 @@ class Word2SeqAutoEncoder(object):
                 train_log_dir = os.path.join(log_dir, "train")
                 print("Save summary to %s" % log_dir)
                 self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
-
-    @staticmethod
-    def print_model_stats(tvars):
-        total_parameters = 0
-        for variable in tvars:
-            print("Trainable %s" % variable.name)
-            # shape is an array of tf.Dimension
-            shape = variable.get_shape()
-            variable_parametes = 1
-            for dim in shape:
-                variable_parametes *= dim.value
-            total_parameters += variable_parametes
-        print("Total number of trainble parameters is %d" % total_parameters)
-
-    def beam_rnn_decoder(self, decoder_embedding, initial_state, cell, embedding, scope=None):
-        """
-        :param decoder_inputs: B * max_enc_len
-        :param initial_state: B * cell_size
-        :param cell:
-        :param scope: the name scope
-        :return: decoder_outputs, the last decoder_state
-        """
-        beam_symbols, beam_path, log_beam_probs = [], [], []
-        loop_function = self.get_loop_function(embedding, self.vocab_size, beam_symbols, beam_path, log_beam_probs)
-        outputs, state = rnn_decoder(decoder_embedding, initial_state, cell, loop_function=loop_function, scope=scope)
-        return outputs, beam_symbols, beam_path, log_beam_probs
-
-    def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
-        if self.forward:
-            loop_function = beam_and_embed(embedding, self.beam_size,
-                                           num_symbol, beam_symbols,
-                                           beam_path, log_beam_probs,
-                                           self.eos_id)
-        else:
-            loop_function = None
-        return loop_function
 
     def prepare_for_beam(self, embedding, initial_state, decoder_inputs):
         """
@@ -620,71 +604,66 @@ class Word2SeqAutoEncoder(object):
         all_refs = []
         all_n_bests = [] # 2D list. List of List of N-best
         local_t = 0
-        fetch = [self.decoder_logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+        if self.loop_function == "beam":
+            fetch = [self.decoder_logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+        else:
+            fetch = [self.beam_symbols]
         while True:
             batch = test_feed.next_batch()
             if batch is None or (num_batch is not None and local_t > num_batch):
                 break
             encoder_len, decoder_len, encoder_x, decoder_y = batch
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
-            pred, symbol, path, probs = sess.run(fetch, feed_dict)
+            outputs = sess.run(fetch, feed_dict)
             # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
             # label: [B x max_dec_len+1]
 
-            beam_symbols_matrix = np.array(symbol)
-            beam_path_matrix = np.array(path)
-            beam_log_matrix = np.array(probs)
+            if self.loop_function == "beam":
+                pred, symbol, path, probs = outputs
+                beam_symbols_matrix = np.array(symbol)
+                beam_path_matrix = np.array(path)
+                beam_log_matrix = np.array(probs)
 
-            for b_idx in range(test_feed.batch_size):
-                ref = list(decoder_y[b_idx, 1:])
-                src = list(encoder_x[b_idx, :])
-                # remove padding and EOS symbol
-                src = [s for s in src if s != test_feed.PAD_ID]
-                ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
-                b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                # use lattic to find the N-best list
-                n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(decoder_y[b_idx, 1:])
+                    src = list(encoder_x[b_idx, :])
+                    # remove padding and EOS symbol
+                    src = [s for s in src if s != test_feed.PAD_ID]
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    # use lattic to find the N-best list
+                    n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
 
-                all_srcs.append(src)
-                all_refs.append(ref)
-                all_n_bests.append(n_best)
+                    all_srcs.append(src)
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
+            else:
+                beam_symbols_matrix = np.array(outputs[0]).T
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(decoder_y[b_idx, 1:])
+                    src = list(encoder_x[b_idx, :])
+                    # remove padding and EOS symbol
+                    src = [s for s in src if s != test_feed.PAD_ID]
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[b_idx, :].tolist()
+                    # use lattic to find the N-best list
+                    if test_feed.EOS_ID in b_beam_symbol:
+                        n_best = [(1.0, b_beam_symbol[0:b_beam_symbol.index(test_feed.EOS_ID)])]
+                    else:
+                        n_best = [(1.0, b_beam_symbol)]
+                    all_srcs.append(src)
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
 
             local_t += 1
 
         # get error
         return self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
 
-    def beam_error(self, all_srcs, all_refs, all_n_best, name, rev_vocab):
-        all_bleu = []
-        for src, ref, n_best in zip(all_srcs, all_refs, all_n_best):
-            src = [rev_vocab[word] for word in src]
-            ref = [rev_vocab[word] for word in ref]
-            local_bleu = []
-            print("Source>> %s" % " ".join(src))
-            for score, best in n_best:
-                best = [rev_vocab[word] for word in best]
-                print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
-                try:
-                    local_bleu.append(bleu.sentence_bleu([ref], best))
-                except ZeroDivisionError:
-                    local_bleu.append(0.0)
-            print("*"*20)
-            all_bleu.append(local_bleu)
 
-        # begin evaluation of @n
-        reports = []
-        for b in range(self.beam_size):
-            avg_best_bleu = np.mean([np.max(local_bleu[0:b + 1]) for local_bleu in all_bleu])
-            record = "%s@%d BLEU %f" % (name, b + 1, float(avg_best_bleu))
-            reports.append(record)
-            print(record)
-
-        return reports
-
-
-class Word2Seq2Auto(object):
+class Word2Seq2Auto(BaseWord2Seq):
 
     def __init__(self, sess, config, vocab_size, eos_id, log_dir=None, forward=False):
         self.batch_size = config.batch_size
@@ -843,47 +822,6 @@ class Word2Seq2Auto(object):
                 train_log_dir = os.path.join(log_dir, "train")
                 print("Save summary to %s" % log_dir)
                 self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
-
-    @staticmethod
-    def print_model_stats(tvars):
-        total_parameters = 0
-        for variable in tvars:
-            print("Trainable %s" % variable.name)
-            # shape is an array of tf.Dimension
-            shape = variable.get_shape()
-            variable_parametes = 1
-            for dim in shape:
-                variable_parametes *= dim.value
-            total_parameters += variable_parametes
-        print("Total number of trainble parameters is %d" % total_parameters)
-
-    def beam_rnn_decoder(self, decoder_embedding, initial_state, cell, embedding, scope=None):
-        """
-        :param decoder_inputs: B * max_enc_len
-        :param initial_state: B * cell_size
-        :param cell:
-        :param scope: the name scope
-        :return: decoder_outputs, the last decoder_state
-        """
-        beam_symbols, beam_path, log_beam_probs = [], [], []
-        loop_function = self.get_loop_function(embedding, self.vocab_size, beam_symbols, beam_path, log_beam_probs)
-        outputs, state = rnn_decoder(decoder_embedding, initial_state, cell, loop_function=loop_function, scope=scope)
-        return outputs, beam_symbols, beam_path, log_beam_probs, state
-
-    def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
-        if self.forward:
-            if self.loop_function == "beam":
-                loop_function = beam_and_embed(embedding, self.beam_size,
-                                               num_symbol, beam_symbols,
-                                               beam_path, log_beam_probs,
-                                               self.eos_id)
-            elif self.loop_function == "gumble":
-                loop_function = gumbel_sample_and_embed(embedding, beam_symbols)
-            else:
-                loop_function = extract_argmax_and_embed(embedding, beam_symbols)
-        else:
-            loop_function = None
-        return loop_function
 
     def prepare_for_beam(self, embedding, initial_state, decoder_inputs):
         """
@@ -1051,42 +989,13 @@ class Word2Seq2Auto(object):
                     all_srcs.append(src)
                     all_refs.append(ref)
                     all_n_bests.append(n_best)
-
-
             local_t += 1
 
         # get error
         return self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
 
-    def beam_error(self, all_srcs, all_refs, all_n_best, name, rev_vocab):
-        all_bleu = []
-        for src, ref, n_best in zip(all_srcs, all_refs, all_n_best):
-            src = [rev_vocab[word] for word in src]
-            ref = [rev_vocab[word] for word in ref]
-            local_bleu = []
-            print("Source>> %s" % " ".join(src))
-            for score, best in n_best:
-                best = [rev_vocab[word] for word in best]
-                print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
-                try:
-                    local_bleu.append(bleu.sentence_bleu([ref], best))
-                except ZeroDivisionError:
-                    local_bleu.append(0.0)
-            print("*"*20)
-            all_bleu.append(local_bleu)
 
-        # begin evaluation of @n
-        reports = []
-        for b in range(self.beam_size):
-            avg_best_bleu = np.mean([np.max(local_bleu[0:b + 1]) for local_bleu in all_bleu])
-            record = "%s@%d BLEU %f" % (name, b + 1, float(avg_best_bleu))
-            reports.append(record)
-            print(record)
-
-        return reports
-
-
-class Future2Seq(object):
+class Future2Seq(BaseWord2Seq):
 
     def __init__(self, sess, config, vocab_size, eos_id, log_dir=None, forward=False):
         self.batch_size = config.batch_size
@@ -1224,43 +1133,6 @@ class Future2Seq(object):
             train_log_dir = os.path.join(log_dir, "train")
             print("Save summary to %s" % log_dir)
             self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
-
-    @staticmethod
-    def print_model_stats(tvars):
-        total_parameters = 0
-        for variable in tvars:
-            print("Trainable %s" % variable.name)
-            # shape is an array of tf.Dimension
-            shape = variable.get_shape()
-            variable_parametes = 1
-            for dim in shape:
-                variable_parametes *= dim.value
-            total_parameters += variable_parametes
-        print("Total number of trainble parameters is %d" % total_parameters)
-
-    def beam_rnn_decoder(self, decoder_embedding, initial_state, cell, embedding, scope=None, return_all_states=False):
-        """
-        :param decoder_inputs: B * max_enc_len
-        :param initial_state: B * cell_size
-        :param cell:
-        :param scope: the name scope
-        :return: decoder_outputs, the last decoder_state
-        """
-        beam_symbols, beam_path, log_beam_probs = [], [], []
-        loop_function = self.get_loop_function(embedding, self.vocab_size, beam_symbols, beam_path, log_beam_probs)
-        outputs, states = rnn_decoder(decoder_embedding, initial_state, cell, loop_function=loop_function, scope=scope,
-                                     return_all_states=return_all_states)
-        return outputs, beam_symbols, beam_path, log_beam_probs, states
-
-    def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
-        if self.forward:
-            loop_function = beam_and_embed(embedding, self.beam_size,
-                                           num_symbol, beam_symbols,
-                                           beam_path, log_beam_probs,
-                                           self.eos_id)
-        else:
-            loop_function = None
-        return loop_function
 
     def prepare_for_beam(self, embedding, initial_state, decoder_inputs):
         """
@@ -1412,30 +1284,3 @@ class Future2Seq(object):
 
         # get error
         return self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
-
-    def beam_error(self, all_srcs, all_refs, all_n_best, name, rev_vocab):
-        all_bleu = []
-        for src, ref, n_best in zip(all_srcs, all_refs, all_n_best):
-            src = [rev_vocab[word] for word in src]
-            ref = [rev_vocab[word] for word in ref]
-            local_bleu = []
-            print("Source>> %s" % " ".join(src))
-            for score, best in n_best:
-                best = [rev_vocab[word] for word in best]
-                print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
-                try:
-                    local_bleu.append(bleu.sentence_bleu([ref], best))
-                except ZeroDivisionError:
-                    local_bleu.append(0.0)
-            print("*"*20)
-            all_bleu.append(local_bleu)
-
-        # begin evaluation of @n
-        reports = []
-        for b in range(self.beam_size):
-            avg_best_bleu = np.mean([np.max(local_bleu[0:b + 1]) for local_bleu in all_bleu])
-            record = "%s@%d BLEU %f" % (name, b + 1, float(avg_best_bleu))
-            reports.append(record)
-            print(record)
-
-        return reports
