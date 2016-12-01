@@ -56,6 +56,7 @@ class Word2SeqConfig(object):
 class Word2SeqAutoConfig(object):
     op = "adam"
     cell_type = "gru"
+    loop_function = "gumble"
 
     # general config
     grad_clip = 10.0
@@ -80,20 +81,22 @@ class Word2SeqAutoConfig(object):
     patient_increase = 2.0
     early_stop = True
 
+
 class HybridSeqConfig(object):
     op = "adam"
     cell_type = "gru"
 
     # general config
     grad_clip = 10.0
-    init_w = 0.05
-    batch_size = 40
+    init_w = 0.08
+    batch_size = 64
     embed_size = 300
+    dec_cell_size = 600
     utt_cell_size = 600
     context_cell_size = 600
     num_layer = 1
     max_epoch = 20
-    beam_size = 5
+    beam_size = 20
 
     context_size = 10
     max_enc_size = 50

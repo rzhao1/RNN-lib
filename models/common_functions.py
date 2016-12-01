@@ -28,7 +28,7 @@ def beam_and_embed(embedding, beam_size, num_symbols, beam_symbols, beam_path, l
         else:
             probs = tf.reshape(probs, [-1, beam_size * num_symbols])
             # discard the other beams for the first time step
-            probs = probs[:, 0:num_symbols] #+ tf.log(tf.range(1, 20005, dtype=tf.float32) * 10.4803)
+            probs = probs[:, 0:num_symbols] #+ tf.log(tf.range(1, 20006, dtype=tf.float32) * 10.4803)
         # for i == 1, probs has shape batch_size * number_symbol
         # for i > 1, probs has shape batch_size * [beam_size*num_symbol]
 
@@ -43,7 +43,7 @@ def beam_and_embed(embedding, beam_size, num_symbols, beam_symbols, beam_path, l
         beam_parent = indices // num_symbols  # Which hypothesis it came from.
 
         eos_mask = tf.expand_dims(tf.to_float(tf.equal(symbols, EOS_ID)), 1)
-        best_probs += eos_mask * -100.0
+        best_probs += -100.0 * eos_mask
 
         # save to list
         beam_symbols.append(symbols)
@@ -55,7 +55,7 @@ def beam_and_embed(embedding, beam_size, num_symbols, beam_symbols, beam_path, l
     return beam_search
 
 
-def extract_argmax_and_embed(embedding, output_projection=None, update_embedding=False):
+def extract_argmax_and_embed(embedding, max_symbols, output_projection=None, update_embedding=False):
     """Get a loop_function that extracts the previous symbol and embeds it.
     Args:
       embedding: embedding tensor for symbols.
@@ -71,12 +71,28 @@ def extract_argmax_and_embed(embedding, output_projection=None, update_embedding
         if output_projection is not None:
             prev = nn_ops.xw_plus_b(
                 prev, output_projection[0], output_projection[1])
+
         prev_symbol = tf.argmax(prev, 1)
+        max_symbols.append(prev_symbol)
         # Note that gradients will not propagate through the second parameter of
         # embedding_lookup.
         emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
         if not update_embedding:
             emb_prev = array_ops.stop_gradient(emb_prev)
+        return emb_prev
+
+    return loop_function
+
+
+def gumbel_sample_and_embed(embedding, gumble_symbols, max_gumbel_noise=1.0):
+
+    def loop_function(prev, _):
+        matrix_U = -1.0 * tf.log(-1.0*tf.log(tf.random_uniform(tf.shape(prev), minval=0.0, maxval=max_gumbel_noise)))
+        prev_symbol = tf.argmax(tf.sub(prev, matrix_U), dimension=1)
+        gumble_symbols.append(prev_symbol)
+        # Note that gradients will not propagate through the second parameter of
+        # embedding_lookup.
+        emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
         return emb_prev
 
     return loop_function
@@ -133,7 +149,7 @@ def get_n_best(beam_symbols, beam_path, beam_log, top_n, EOS_ID):
             _path.append(beam_symbols[_id][_ptr])
             _ptr = beam_path[_id][_ptr]
             if _id > 0 and beam_symbols[_id-1][_ptr] == EOS_ID:
-                _score = -10000.0
+                _score = -100.0
                 break
         _path = _path[::-1]
         return _score, _path

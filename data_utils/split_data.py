@@ -621,6 +621,7 @@ class HybridSeqCorpus(object):
                 if data_lines[t_id][0] != movie_key:
                     break
                 context_utt.append(t_id)
+            context_utt = context_utt[::-1]
             content_xs.append((context_utt, prev_utt))
             content_ys.append(idx)
 

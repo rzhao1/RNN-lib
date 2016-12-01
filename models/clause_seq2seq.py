@@ -320,6 +320,7 @@ class Hybrid2Seq(object):
     def __init__(self, sess, config, vocab_size,  eos_id, log_dir, forward):
         self.batch_size = config.batch_size
         self.forward = forward
+        self.dec_cell_size = config.dec_cell_size
         self.utt_cell_size = config.utt_cell_size
         self.context_cell_size = config.context_cell_size
         self.vocab_size = vocab_size
@@ -399,7 +400,7 @@ class Hybrid2Seq(object):
                                                                      self.decoder_batch[:, 0:max_decode_minus_one])
 
             with variable_scope.variable_scope('dec'):
-                cell_dec = tf.nn.rnn_cell.GRUCell(self.utt_cell_size)
+                cell_dec = tf.nn.rnn_cell.GRUCell(self.dec_cell_size)
 
                 if config.keep_prob < 1.0:
                     rnn_cell.DropoutWrapper(cell_dec, output_keep_prob=config.keep_prob, input_keep_prob=config.keep_prob)
@@ -586,6 +587,7 @@ class Hybrid2Seq(object):
                 ref = list(decoder_y[b_idx, 1:])
                 src = list(prev_x[b_idx])
                 # remove padding and EOS symbol
+                src = [s for s in src if s not in [test_feed.PAD_ID, test_feed.EOS_ID]]
                 ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
                 b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
                 b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
