@@ -741,7 +741,12 @@ class FutureSeqCorpus(object):
         return vocab[0:self.max_vocab_size]
 
     def print_stats(self, name, data):
-        print ('%s encoder %d lines' % (name, len(data)))
+        print ('%s data %d lines' % (name, len(data)))
+        x_len = [len(self.data_lines[x][2].split()) for ctx, x, y, z in data]
+        print ('%s x avg len %.2f max len %.2f of %d lines' % (name, np.mean(x_len), np.max(x_len), len(x_len)))
+        y_len = [len(self.data_lines[y][2].split()) for ctx, x, y, z in data]
+        print ('%s y avg len %.2f max len %.2f of %d lines' % (name, np.mean(y_len), np.max(y_len), len(y_len)))
+
 
     def _parse_file(self, lines, split_size):
         """
