@@ -529,26 +529,36 @@ class FutureSeqDataFeed(object):
         xyz_rows = [self.id_xyz[idx] for idx in selected_index]
 
         # break down y labels
-        x_utts, y_utts, z_utts = [], [], []
+        cxt_utts, x_utts, y_utts, z_utts = [], [], [], []
+        batch_c_len = []
         for context, x, y, z in xyz_rows:
+            batch_c_len.append(len(context))
+            cxt_mat = np.zeros((len(context), self.max_utt_size))
+            for c_id, c in enumerate(context):
+                text = self.id_lines[c][2][0:self.max_utt_size]
+                cxt_mat[c_id, 0:len(text)] = text
+            cxt_utts.append(cxt_mat)
             x_utts.append(self.id_lines[x][2][0:self.max_utt_size])
             y_utts.append(self.id_lines[y][2][0:self.max_utt_size-2])
             z_utts.append(self.id_lines[z][2][0:self.max_utt_size])
 
+        batch_c_len = np.array(batch_c_len, dtype=np.int32)
         batch_x_len = np.array([len(row) for row in x_utts], dtype=np.int32)
         batch_y_len = np.array([len(row) for row in y_utts], dtype=np.int32)
         batch_z_len = np.array([len(row) for row in z_utts], dtype=np.int32)
 
+        c_batch = np.zeros((self.batch_size, np.max(batch_c_len), self.max_utt_size), dtype=np.int32)
         x_batch = np.zeros((self.batch_size, np.max(batch_x_len)), dtype=np.int32)
         y_batch = np.zeros((self.batch_size, self.max_utt_size), dtype=np.int32)
         z_batch = np.zeros((self.batch_size, np.max(batch_z_len)), dtype=np.int32)
 
         for b_id in range(self.batch_size):
+            c_batch[b_id, 0:batch_c_len[b_id], :] = cxt_utts[b_id]
             x_batch[b_id, 0:len(x_utts[b_id])] = x_utts[b_id]
             y_batch[b_id, 0:len(y_utts[b_id])+2] = [self.GO_ID] + y_utts[b_id] + [self.EOS_ID]
             z_batch[b_id, 0:len(z_utts[b_id])] = z_utts[b_id]
 
-        return batch_x_len, batch_y_len, batch_z_len, x_batch, y_batch, z_batch
+        return batch_c_len, batch_x_len, batch_y_len, batch_z_len, c_batch, x_batch, y_batch, z_batch
 
     def epoch_init(self, batch_size, shuffle=True):
         # create batch indexes for computation efficiency

@@ -10,14 +10,14 @@ from config_utils import FutureSeqConfig as Config
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
-tf.app.flags.DEFINE_string("data_file", "clean_data_ran.txt", "the file that contains the raw data")
+tf.app.flags.DEFINE_string("data_file", "open_subtitle.txt", "the file that contains the raw data")
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
-tf.app.flags.DEFINE_bool("resume", False, "Resume training from the ckp at test_path")
-tf.app.flags.DEFINE_bool("forward", True, "Do decoding only")
-tf.app.flags.DEFINE_string("test_path", "run1480574994", "the dir to load checkpoint for forward only")
+tf.app.flags.DEFINE_bool("resume", True, "Resume training from the ckp at test_path")
+tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
+tf.app.flags.DEFINE_string("test_path", "run1480606784", "the dir to load checkpoint for forward only")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -37,7 +37,7 @@ def main():
     pp(config)
 
     # load corpus
-    api = FutureSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [98, 1, 1], FLAGS.max_vocab_size, config.context_size)
+    api = FutureSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [99, 0.5, 0.5], FLAGS.max_vocab_size, config.context_size)
     corpus_data = api.get_corpus()
 
 
@@ -86,7 +86,10 @@ def main():
         if ckpt:
             print("Reading models parameters from %s" % ckpt.model_checkpoint_path)
             sess.run(tf.initialize_all_variables())
-            model.saver.restore(sess, ckpt.model_checkpoint_path)
+            try:
+                model.saver.restore(sess, ckpt.model_checkpoint_path)
+            except:
+                print("ignore")
             base_epoch = int(ckpt.model_checkpoint_path.split("-")[1]) + 1
             print("Resume from epoch %d" % base_epoch)
         else:
@@ -138,7 +141,7 @@ def main():
         else:
             # do sampling to see what kind of sentences is generated
             test_feed.epoch_init(test_config.batch_size, shuffle=True)
-            test_model.test("TEST", sess, test_feed, num_batch=20)
+            test_model.test("TEST", sess, test_feed, num_batch=100)
 
             # begin validation
             valid_feed.epoch_init(valid_config.batch_size, shuffle=False)

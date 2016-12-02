@@ -4,6 +4,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.ops import rnn_cell, rnn
 from common_functions import *
+from word_seq2seq import BaseWord2Seq
 
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import embedding_ops
@@ -11,7 +12,7 @@ from tensorflow.python.ops import variable_scope
 import nltk.translate.bleu_score as bleu
 
 
-class Utt2Seq(object):
+class Utt2Seq(BaseWord2Seq):
     def __init__(self, sess, config, vocab_size, feature_size, max_decoder_size, eos_id, log_dir, forward):
         self.batch_size = config.batch_size
         self.forward = forward
@@ -132,42 +133,6 @@ class Utt2Seq(object):
                 print("Save summary to %s" % log_dir)
                 self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
 
-    @staticmethod
-    def print_model_stats(tvars):
-        total_parameters = 0
-        for variable in tvars:
-            print("Trainable %s" % variable.name)
-            # shape is an array of tf.Dimension
-            shape = variable.get_shape()
-            var_parameters = 1
-            for dim in shape:
-                var_parameters *= dim.value
-            total_parameters += var_parameters
-        print("Total number of trainble parameters is %d" % total_parameters)
-
-    def beam_rnn_decoder(self, decoder_embedding, initial_state, cell, embedding, scope=None):
-        """
-        :param decoder_inputs: B * max_enc_len
-        :param initial_state: B * cell_size
-        :param cell:
-        :param scope: the name scope
-        :return: decoder_outputs, the last decoder_state
-        """
-        beam_symbols, beam_path, log_beam_probs = [], [], []
-        loop_function = self.get_loop_function(embedding, self.vocab_size, beam_symbols, beam_path, log_beam_probs)
-        outputs, state = rnn_decoder(decoder_embedding, initial_state, cell, loop_function=loop_function, scope=scope)
-        return outputs, beam_symbols, beam_path, log_beam_probs
-
-    def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
-        if self.forward:
-            loop_function = beam_and_embed(embedding, self.beam_size,
-                                           num_symbol, beam_symbols,
-                                           beam_path, log_beam_probs,
-                                           self.eos_id)
-        else:
-            loop_function = None
-        return loop_function
-
     def prepare_for_beam(self, embedding, initial_state, decoder_inputs):
         """
         Map the decoder inputs into embedding. If using beam search, also tile the inputs by beam_size times
@@ -253,6 +218,7 @@ class Utt2Seq(object):
 
     def test(self, name, sess, test_feed, num_batch=None):
         all_refs = []
+        all_srcs = []
         all_n_bests = [] # 2D list. List of List of N-best
         local_t = 0
         fetch = [self.logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
@@ -272,6 +238,7 @@ class Utt2Seq(object):
 
             for b_idx in range(test_feed.batch_size):
                 ref = list(decoder_y[b_idx, 1:])
+                src = [test_feed.EOS_ID]
                 # remove padding and EOS symbol
                 ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
                 b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
@@ -281,6 +248,7 @@ class Utt2Seq(object):
                 n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
 
                 all_refs.append(ref)
+                all_srcs.append(src)
                 all_n_bests.append(n_best)
 
             local_t += 1
@@ -288,35 +256,8 @@ class Utt2Seq(object):
         # get error
         return self.beam_error(all_refs, all_n_bests, name, test_feed.rev_vocab, num_batch is not None)
 
-    def beam_error(self, all_refs, all_n_best, name, rev_vocab, verbose):
-        all_bleu = []
-        for ref, n_best in zip(all_refs, all_n_best):
-            ref = [rev_vocab[word] for word in ref]
-            local_bleu = []
-            for score, best in n_best:
-                best = [rev_vocab[word] for word in best]
-                if verbose:
-                    print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
-                try:
-                    local_bleu.append(bleu.sentence_bleu([ref], best))
-                except ZeroDivisionError:
-                    local_bleu.append(0.0)
-            if verbose:
-                print("*"*20)
-            all_bleu.append(local_bleu)
 
-        # begin evaluation of @n
-        reports = []
-        for b in range(self.beam_size):
-            avg_best_bleu = np.mean([np.max(local_bleu[0:b + 1]) for local_bleu in all_bleu])
-            record = "%s@%d BLEU %f" % (name, b + 1, float(avg_best_bleu))
-            reports.append(record)
-            print(record)
-
-        return reports
-
-
-class Hybrid2Seq(object):
+class Hybrid2Seq(BaseWord2Seq):
     def __init__(self, sess, config, vocab_size,  eos_id, log_dir, forward):
         self.batch_size = config.batch_size
         self.forward = forward
@@ -364,7 +305,7 @@ class Hybrid2Seq(object):
             context_embedding = embedding_ops.embedding_lookup(embedding, tf.squeeze(tf.reshape(self.context_batch, [-1, 1]),
                                                                                      squeeze_dims=[1]))
             context_embedding = tf.reshape(context_embedding, [-1, self.max_context_size, self.max_encoder_size, config.embed_size])
-            context_embedding = tf.reduce_sum(context_embedding, reduction_indices=3)
+            context_embedding = tf.reduce_sum(context_embedding, reduction_indices=2)
 
             # create background embedding
             profile_embedding = tf.matmul(tf.to_float(self.profile), embedding)
@@ -454,46 +395,6 @@ class Hybrid2Seq(object):
                 print("Save summary to %s" % log_dir)
                 self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
 
-    @staticmethod
-    def print_model_stats(tvars):
-        total_parameters = 0
-        for variable in tvars:
-            print("Trainable %s" % variable.name)
-            # shape is an array of tf.Dimension
-            shape = variable.get_shape()
-            var_parameters = 1
-            for dim in shape:
-                var_parameters *= dim.value
-            total_parameters += var_parameters
-        print("Total number of trainble parameters is %d" % total_parameters)
-
-    def beam_rnn_decoder(self, decoder_embedding, initial_state, cell, embedding, scope=None):
-        """
-        :param decoder_inputs: B * max_enc_len
-        :param initial_state: B * cell_size
-        :param cell:
-        :param scope: the name scope
-        :return: decoder_outputs, the last decoder_state
-        """
-        beam_symbols, beam_path, log_beam_probs = [], [], []
-        loop_function = self.get_loop_function(embedding, self.vocab_size, beam_symbols, beam_path, log_beam_probs)
-        outputs, state = rnn_decoder(decoder_embedding, initial_state, cell, loop_function=loop_function, scope=scope)
-        return outputs, beam_symbols, beam_path, log_beam_probs
-
-    def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
-        if self.forward:
-            if self.loop_function == "beam":
-                loop_function = beam_and_embed(embedding, self.beam_size,
-                                               num_symbol, beam_symbols,
-                                               beam_path, log_beam_probs,
-                                               self.eos_id)
-            elif self.loop_function == "gumble":
-                loop_function = gumbel_sample_and_embed(embedding, beam_symbols)
-            else:
-                loop_function = extract_argmax_and_embed(embedding, beam_symbols)
-        else:
-            loop_function = None
-        return loop_function
 
     def prepare_for_beam(self, embedding, initial_state, decoder_inputs):
         """
@@ -635,30 +536,3 @@ class Hybrid2Seq(object):
 
         # get error
         return self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
-
-    def beam_error(self, all_srcs, all_refs, all_n_best, name, rev_vocab):
-        all_bleu = []
-        for src, ref, n_best in zip(all_srcs, all_refs, all_n_best):
-            src = [rev_vocab[word] for word in src]
-            ref = [rev_vocab[word] for word in ref]
-            local_bleu = []
-            print("Source>> %s" % " ".join(src))
-            for score, best in n_best:
-                best = [rev_vocab[word] for word in best]
-                print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
-                try:
-                    local_bleu.append(bleu.sentence_bleu([ref], best))
-                except ZeroDivisionError:
-                    local_bleu.append(0.0)
-            print("*"*20)
-            all_bleu.append(local_bleu)
-
-        # begin evaluation of @n
-        reports = []
-        for b in range(self.beam_size):
-            avg_best_bleu = np.mean([np.max(local_bleu[0:b + 1]) for local_bleu in all_bleu])
-            record = "%s@%d BLEU %f" % (name, b + 1, float(avg_best_bleu))
-            reports.append(record)
-            print(record)
-
-        return reports

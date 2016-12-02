@@ -103,6 +103,7 @@ class Word2Seq(BaseWord2Seq):
         self.word_embed_size = config.embed_size
         self.is_lstm_cell = config.cell_type == "lstm"
         self.eos_id = eos_id
+        self.loop_function = config.loop_function
 
         self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="encoder_seq")
         # max_decoder_size including GO and EOS
@@ -1001,17 +1002,20 @@ class Future2Seq(BaseWord2Seq):
         self.batch_size = config.batch_size
         self.cell_size = cell_size = config.cell_size
         self.vocab_size = vocab_size
-        self.max_decoder_size = config.max_utt_size
+        self.max_utt_size = config.max_utt_size
         self.forward = forward
         self.beam_size = config.beam_size
         self.word_embed_size = config.embed_size
         self.is_lstm_cell = config.cell_type == "lstm"
         self.eos_id = eos_id
         self.num_layer = config.num_layer
+        self.loop_function = config.loop_function
 
+        self.c_batch = tf.placeholder(dtype=tf.int32, shape=(None, None, self.max_utt_size), name="c_sequence")
         self.x_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="x_sequence")
-        self.y_batch = tf.placeholder(dtype=tf.int32, shape=(None, self.max_decoder_size), name="y_sequence")
+        self.y_batch = tf.placeholder(dtype=tf.int32, shape=(None, self.max_utt_size), name="y_sequence")
         self.z_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="z_sequence")
+        self.c_len = tf.placeholder(dtype=tf.int32, shape=(None), name="c_lens")
         self.x_len = tf.placeholder(dtype=tf.int32, shape=(None), name="x_lens")
         self.y_len = tf.placeholder(dtype=tf.int32, shape=(None), name="y_lens")
         self.z_len = tf.placeholder(dtype=tf.int32, shape=(None), name="z_lens")
@@ -1022,18 +1026,35 @@ class Future2Seq(BaseWord2Seq):
 
         max_x_sent_len = array_ops.shape(self.x_batch)[1]
         max_z_sent_len = array_ops.shape(self.z_batch)[1]
+        max_c_sent_len = array_ops.shape(self.c_batch)[1]
 
         # As our current version decoder is fixed-size,
         # the decoder is in format GO sent EOS. Mostly we either work with GO sent or sent EOS. that is max_decoder-1
-        max_y_minus_one = self.max_decoder_size - 1
+        max_y_minus_one = self.max_utt_size - 1
 
         with variable_scope.variable_scope("word_embedding"):
             embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
+
+            c_embedding = embedding_ops.embedding_lookup(embedding, tf.squeeze(tf.reshape(self.c_batch, [-1, 1]), squeeze_dims=[1]))
+            c_embedding = tf.reshape(c_embedding, [-1, max_c_sent_len, self.max_utt_size, config.embed_size])
+            c_embedding = tf.reduce_sum(c_embedding, reduction_indices=2) # collapse the max_utt_size dimension [2]
+
             x_embedding = embedding_ops.embedding_lookup(embedding, tf.squeeze(tf.reshape(self.x_batch, [-1, 1]), squeeze_dims=[1]))
             x_embedding = tf.reshape(x_embedding, [-1, max_x_sent_len, config.embed_size])
 
             z_embedding = embedding_ops.embedding_lookup(embedding, tf.squeeze(tf.reshape(self.z_batch, [-1, 1]), squeeze_dims=[1]))
             z_embedding = tf.reshape(z_embedding, [-1,  max_z_sent_len, config.embed_size])
+
+        with tf.variable_scope("context"):
+            cell_cxt = tf.nn.rnn_cell.GRUCell(cell_size)
+            if config.keep_prob < 1.0:
+                c_embedding = tf.nn.dropout(c_embedding, keep_prob=config.keep_prob)
+                cell_cxt = rnn_cell.DropoutWrapper(cell_cxt, output_keep_prob=config.keep_prob)
+
+            if config.num_layer > 1:
+                cell_cxt = rnn_cell.MultiRNNCell([cell_cxt] * config.num_layer, state_is_tuple=True)
+
+            _, c_last_state = rnn.dynamic_rnn(cell_cxt, c_embedding, sequence_length=self.c_len, dtype=tf.float32)
 
         with tf.variable_scope('encoder'):
             cell_enc = tf.nn.rnn_cell.GRUCell(cell_size)
@@ -1047,7 +1068,8 @@ class Future2Seq(BaseWord2Seq):
             if config.num_layer > 1:
                 cell_enc = rnn_cell.MultiRNNCell([cell_enc] * config.num_layer, state_is_tuple=True)
 
-            _, x_last_state = rnn.dynamic_rnn(cell_enc, x_embedding, sequence_length=self.x_len, dtype=tf.float32)
+            _, x_last_state = rnn.dynamic_rnn(cell_enc, x_embedding, initial_state=c_last_state,
+                                              sequence_length=self.x_len, dtype=tf.float32)
         with tf.variable_scope('decoder'):
             # post process the decoder embedding inputs and encoder_last_state
             # Tony decoder embedding we need to remove the last column
@@ -1181,11 +1203,11 @@ class Future2Seq(BaseWord2Seq):
             batch = train_feed.next_batch()
             if batch is None:
                 break
-            batch_x_len, batch_y_len, batch_z_len, x_batch, y_batch, z_batch = batch
-
+            batch_c_len, batch_x_len, batch_y_len, batch_z_len, c_batch, x_batch, y_batch, z_batch = batch
+            feed_dict = {self.c_batch: c_batch, self.x_batch: x_batch, self.y_batch: y_batch, self.z_batch: z_batch,
+                         self.c_len: batch_c_len, self.x_len: batch_x_len, self.y_len: batch_y_len,
+                         self.z_len: batch_z_len}
             fetches = [self.train_ops, self.y_loss_avg, self.z_loss_avg]
-            feed_dict = {self.x_batch: x_batch, self.y_batch: y_batch, self.z_batch: z_batch,
-                         self.x_len:batch_x_len, self.y_len:batch_y_len, self.z_len: batch_z_len}
             _, y_loss, z_loss = sess.run(fetches, feed_dict)
 
             y_losses.append(y_loss)
@@ -1226,10 +1248,11 @@ class Future2Seq(BaseWord2Seq):
             if batch is None:
                 break
 
-            batch_x_len, batch_y_len, batch_z_len, x_batch, y_batch, z_batch = batch
+            batch_c_len, batch_x_len, batch_y_len, batch_z_len, c_batch, x_batch, y_batch, z_batch = batch
+            feed_dict = {self.c_batch: c_batch, self.x_batch: x_batch, self.y_batch: y_batch, self.z_batch: z_batch,
+                         self.c_len: batch_c_len, self.x_len: batch_x_len, self.y_len: batch_y_len,
+                         self.z_len: batch_z_len}
             fetches = [self.y_loss_avg, self.z_loss_avg]
-            feed_dict = {self.x_batch: x_batch, self.y_batch: y_batch, self.z_batch: z_batch,
-                         self.x_len: batch_x_len, self.y_len: batch_y_len, self.z_len: batch_z_len}
             decoder_loss, reconstruct_loss = sess.run(fetches, feed_dict)
             y_losses.append(decoder_loss)
             z_losses.append(reconstruct_loss)
@@ -1238,8 +1261,8 @@ class Future2Seq(BaseWord2Seq):
         valid_dec_loss = np.mean(y_losses)
         valid_reconstruct_loss = np.mean(z_losses)
 
-        print("Valid Y loss %f perleixty %f :: valid Z loss %f perleixty %f"
-              % (float(valid_dec_loss), np.exp(valid_dec_loss),
+        print("%s Y loss %f perleixty %f :: valid Z loss %f perleixty %f"
+              % (name, float(valid_dec_loss), np.exp(valid_dec_loss),
                  float(valid_reconstruct_loss), np.exp(valid_reconstruct_loss)))
         return valid_dec_loss
 
@@ -1248,37 +1271,61 @@ class Future2Seq(BaseWord2Seq):
         all_refs = []
         all_n_bests = [] # 2D list. List of List of N-best
         local_t = 0
-        fetch = [self.y_logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+        if self.loop_function == "beam":
+            fetch = [self.y_logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+        else:
+            fetch = [self.beam_symbols]
+
         while True:
             batch = test_feed.next_batch()
             if batch is None or (num_batch is not None and local_t > num_batch):
                 break
-            batch_x_len, batch_y_len, batch_z_len, x_batch, y_batch, z_batch = batch
-            feed_dict = {self.x_batch: x_batch, self.y_batch: y_batch, self.z_batch: z_batch,
-                         self.x_len: batch_x_len, self.y_len: batch_y_len, self.z_len: batch_z_len}
-            pred, symbol, path, probs = sess.run(fetch, feed_dict)
+            batch_c_len, batch_x_len, batch_y_len, batch_z_len, c_batch, x_batch, y_batch, z_batch = batch
+            feed_dict = {self.c_batch:c_batch, self.x_batch: x_batch, self.y_batch: y_batch, self.z_batch: z_batch,
+                         self.c_len:batch_c_len, self.x_len: batch_x_len, self.y_len: batch_y_len, self.z_len: batch_z_len}
+            outputs = sess.run(fetch, feed_dict)
             # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
             # label: [B x max_dec_len+1]
 
-            beam_symbols_matrix = np.array(symbol)
-            beam_path_matrix = np.array(path)
-            beam_log_matrix = np.array(probs)
+            if self.loop_function == "beam":
+                pred, symbol, path, probs = outputs
+                beam_symbols_matrix = np.array(symbol)
+                beam_path_matrix = np.array(path)
+                beam_log_matrix = np.array(probs)
 
-            for b_idx in range(test_feed.batch_size):
-                ref = list(y_batch[b_idx, 1:])
-                src = list(x_batch[b_idx, :])
-                # remove padding and EOS symbol
-                src = [s for s in src if s != test_feed.PAD_ID]
-                ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
-                b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                # use lattic to find the N-best list
-                n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(y_batch[b_idx, 1:])
+                    src = list(x_batch[b_idx, :])
+                    # remove padding and EOS symbol
+                    src = [s for s in src if s != test_feed.PAD_ID]
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    # use lattic to find the N-best list
+                    n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
 
-                all_srcs.append(src)
-                all_refs.append(ref)
-                all_n_bests.append(n_best)
+                    all_srcs.append(src)
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
+
+            else:
+                beam_symbols_matrix = np.array(outputs[0]).T
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(y_batch[b_idx, 1:])
+                    src = list(x_batch[b_idx, :])
+                    # remove padding and EOS symbol
+                    src = [s for s in src if s != test_feed.PAD_ID]
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[b_idx, :].tolist()
+                    # use lattic to find the N-best list
+                    if test_feed.EOS_ID in b_beam_symbol:
+                        n_best = [(1.0, b_beam_symbol[0:b_beam_symbol.index(test_feed.EOS_ID)])]
+                    else:
+                        n_best = [(1.0, b_beam_symbol)]
+                    all_srcs.append(src)
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
 
             local_t += 1
 

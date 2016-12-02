@@ -74,7 +74,7 @@ def main():
         patience = 10  # wait for at least 10 epoch before consider early stop
         valid_loss_threshold = np.inf
         best_valid_loss = np.inf
-        checkpoint_path = os.path.join(ckp_dir, "hybrid.ckpt")
+        checkpoint_path = os.path.join(ckp_dir, model.__class__.__name__ + ".ckpt")
 
         if not os.path.exists(ckp_dir):
             os.mkdir(ckp_dir)
