@@ -5,12 +5,15 @@ import numpy as np
 import tensorflow as tf
 from data_utils.split_data import WordSeqCorpus
 from data_utils.data_feed import WordSeqDataFeed
-from models.word_seq2seq import Word2SeqAutoEncoder as Model
+from models.word_seq2seq import Word2Seq2Auto as Model
 from config_utils import Word2SeqAutoConfig as Config
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
 tf.app.flags.DEFINE_string("data_file", "open_subtitle.txt", "the file that contains the raw data")
+tf.app.flags.DEFINE_string("vocab_file", "vocab.txt", "the file that contains the given validation data")
+tf.app.flags.DEFINE_string("valid_data", "valid.txt", "the file that contains the given testing data")
+tf.app.flags.DEFINE_string("test_data", "test.txt", "the file that contains the given vocabulary")
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use.")
@@ -37,7 +40,7 @@ def main():
     pp(config)
 
     # load corpus
-    api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [99,0.5,0.5], FLAGS.max_vocab_size,
+    api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, FLAGS.valid_data, FLAGS.test_data, FLAGS.vocab_file,
                         config.max_enc_len, config.max_dec_len, config.line_thres)
     corpus_data = api.get_corpus()
 

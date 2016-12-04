@@ -90,6 +90,69 @@ class BaseWord2Seq(object):
             total_parameters += variable_parametes
         print("Total number of trainble parameters is %d" % total_parameters)
 
+    def test(self, name, sess, test_feed, num_batch=None):
+        all_srcs = []
+        all_refs = []
+        all_n_bests = []  # 2D list. List of List of N-best
+        local_t = 0
+        if self.loop_function == "beam":
+            fetch = [self.decoder_logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+        else:
+            fetch = [self.beam_symbols]
+        while True:
+            batch = test_feed.next_batch()
+            if batch is None or (num_batch is not None and local_t > num_batch):
+                break
+            encoder_len, decoder_len, encoder_x, decoder_y = batch
+            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
+            outputs = sess.run(fetch, feed_dict)
+            # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
+            # label: [B x max_dec_len+1]
+
+            if self.loop_function == "beam":
+                pred, symbol, path, probs = outputs
+                beam_symbols_matrix = np.array(symbol)
+                beam_path_matrix = np.array(path)
+                beam_log_matrix = np.array(probs)
+
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(decoder_y[b_idx, 1:])
+                    src = list(encoder_x[b_idx, :])
+                    # remove padding and EOS symbol
+                    src = [s for s in src if s != test_feed.PAD_ID]
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    # use lattic to find the N-best list
+                    n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
+
+                    all_srcs.append(src)
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
+            else:
+                beam_symbols_matrix = np.array(outputs[0]).T
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(decoder_y[b_idx, 1:])
+                    src = list(encoder_x[b_idx, :])
+                    # remove padding and EOS symbol
+                    src = [s for s in src if s != test_feed.PAD_ID]
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[b_idx, :].tolist()
+                    # use lattic to find the N-best list
+                    if test_feed.EOS_ID in b_beam_symbol:
+                        n_best = [(1.0, b_beam_symbol[0:b_beam_symbol.index(test_feed.EOS_ID)])]
+                    else:
+                        n_best = [(1.0, b_beam_symbol)]
+                    all_srcs.append(src)
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
+
+            local_t += 1
+
+        # get error
+        return self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
+
 
 class Word2Seq(BaseWord2Seq):
 
@@ -107,7 +170,7 @@ class Word2Seq(BaseWord2Seq):
 
         self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="encoder_seq")
         # max_decoder_size including GO and EOS
-        self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, config.max_decoder_size), name="decoder_seq")
+        self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, self.max_decoder_size), name="decoder_seq")
         self.encoder_lens  = tf.placeholder(dtype=tf.int32, shape=(None), name="encoder_lens")
 
         # include GO sent and EOS
@@ -146,8 +209,6 @@ class Word2Seq(BaseWord2Seq):
                 encoder_outputs, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding,
                                                                       sequence_length=self.encoder_lens,
                                                         dtype=tf.float32)
-                if config.num_layer > 1:
-                    encoder_last_state = encoder_last_state[-1]
 
             # post process the decoder embedding inputs and encoder_last_state
             # Tony decoder embedding we need to remove the last column
@@ -165,6 +226,13 @@ class Word2Seq(BaseWord2Seq):
                     print("WARNING: unknown cell type. Use Basic RNN as default")
                     cell_dec = tf.nn.rnn_cell.BasicRNNCell(cell_size)
 
+                if config.keep_prob < 1.0:
+                    cell_dec = rnn_cell.DropoutWrapper(cell_dec, output_keep_prob=config.keep_prob,
+                                                       input_keep_prob=config.keep_prob)
+
+                if config.num_layer > 1:
+                    cell_dec = rnn_cell.MultiRNNCell([cell_dec] * config.num_layer, state_is_tuple=True)
+
                 # output project to vocabulary size
                 cell_dec = tf.nn.rnn_cell.OutputProjectionWrapper(cell_dec, vocab_size)
 
@@ -181,17 +249,15 @@ class Word2Seq(BaseWord2Seq):
                 self.beam_path = beam_path
                 self.log_beam_probs = log_beam_probs
 
-                logits_flat = tf.reshape(tf.pack(dec_outputs, 1), [-1, vocab_size])
                 # skip GO in the beginning
-                labels_flat = tf.squeeze(tf.reshape(self.decoder_batch[:, 1:], [-1, 1]), squeeze_dims=[1])
+                labels = self.decoder_batch[:, 1:]
                 # mask out labels equals PAD_ID = 0
-                weights = tf.to_float(tf.sign(labels_flat))
-                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
+                weights = tf.to_float(tf.sign(labels))
+                self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(self.logits, labels)
                 self.losses *= weights
-                self.loss_sum = tf.reduce_sum(self.losses)
-                self.real_loss = self.loss_sum / tf.reduce_sum(weights)
-                tf.scalar_summary('cross_entropy_loss', self.real_loss)
-                self.merged = tf.merge_all_summaries()
+                loss = tf.reduce_sum(self.losses, reduction_indices=1)
+                loss /= tf.reduce_sum(weights, reduction_indices=1)
+                self.avg_loss = tf.reduce_mean(loss)
 
                 # choose a optimizer
                 if config.op == "adam":
@@ -202,7 +268,7 @@ class Word2Seq(BaseWord2Seq):
                     optim = tf.train.GradientDescentOptimizer(self.learning_rate)
 
                 tvars = tf.trainable_variables()
-                grads, _ = tf.clip_by_global_norm(tf.gradients(self.real_loss, tvars), config.grad_clip)
+                grads, _ = tf.clip_by_global_norm(tf.gradients(self.avg_loss, tvars), config.grad_clip)
                 self.train_ops = optim.apply_gradients(zip(grads, tvars))
                 self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V1)
 
@@ -240,7 +306,6 @@ class Word2Seq(BaseWord2Seq):
     def train(self, global_t, sess, train_feed):
         losses = []
         local_t = 0
-        total_word_num = 0
         start_time = time.time()
         while True:
             batch = train_feed.next_batch()
@@ -248,21 +313,19 @@ class Word2Seq(BaseWord2Seq):
                 break
             encoder_len, decoder_len, encoder_x, decoder_y = batch
 
-            fetches = [self.train_ops, self.loss_sum, self.merged]
+            fetches = [self.train_ops, self.avg_loss]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
-            _, loss, summary = sess.run(fetches, feed_dict)
-            self.train_summary_writer.add_summary(summary, global_t)
+            _, loss = sess.run(fetches, feed_dict)
             losses.append(loss)
             global_t += 1
             local_t += 1
-            total_word_num += np.sum(decoder_len-np.array(1))  # since we remove GO for prediction
             if local_t % (train_feed.num_batch / 50) == 0:
-                train_loss = np.sum(losses) / total_word_num
+                train_loss = np.mean(losses)
                 print("%.2f train loss %f perleixty %f" %
                       (local_t / float(train_feed.num_batch), float(train_loss), np.exp(train_loss)))
         end_time = time.time()
 
-        train_loss = np.sum(losses) / total_word_num
+        train_loss = np.mean(losses)
         print("Train loss %f perleixty %f with step %f"
               % (float(train_loss), np.exp(train_loss), (end_time-start_time)/float(local_t)))
 
@@ -277,61 +340,82 @@ class Word2Seq(BaseWord2Seq):
         :return: average loss
         """
         losses = []
-        total_word_num = 0
-
         while True:
             batch = valid_feed.next_batch()
             if batch is None:
                 break
 
             encoder_len, decoder_len, encoder_x, decoder_y = batch
-            fetches = [self.loss_sum]
+            fetches = [self.avg_loss]
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
             loss = sess.run(fetches, feed_dict)
-            total_word_num += np.sum(decoder_len-np.array(1)) # since we remove GO for prediction
             losses.append(loss)
 
         # print final stats
-        valid_loss = float(np.sum(losses) / total_word_num)
+        valid_loss = float(np.mean(losses))
         print("%s loss %f and perplexity %f" % (name, valid_loss, np.exp(valid_loss)))
         return valid_loss
 
     def test(self, name, sess, test_feed, num_batch=None):
         all_refs = []
+        all_srcs = []
         all_n_bests = [] # 2D list. List of List of N-best
         local_t = 0
-        fetch = [self.logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+        if self.loop_function == "beam":
+            fetch = [self.logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+        else:
+            fetch = [self.beam_symbols]
         while True:
             batch = test_feed.next_batch()
             if batch is None or (num_batch is not None and local_t > num_batch):
                 break
             encoder_len, decoder_len, encoder_x, decoder_y = batch
             feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
-            pred, symbol, path, probs = sess.run(fetch, feed_dict)
-            # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
-            # label: [B x max_dec_len+1]
+            outputs = sess.run(fetch, feed_dict)
 
-            beam_symbols_matrix = np.array(symbol)
-            beam_path_matrix = np.array(path)
-            beam_log_matrix = np.array(probs)
+            if self.loop_function == "beam":
+                pred, symbol, path, probs = outputs
+                # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
+                # label: [B x max_dec_len+1]
 
-            for b_idx in range(test_feed.batch_size):
-                ref = list(decoder_y[b_idx, 1:])
-                # remove padding and EOS symbol
-                ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
-                b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                # use lattic to find the N-best list
-                n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
+                beam_symbols_matrix = np.array(symbol)
+                beam_path_matrix = np.array(path)
+                beam_log_matrix = np.array(probs)
 
-                all_refs.append(ref)
-                all_n_bests.append(n_best)
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(decoder_y[b_idx, 1:])
+                    # remove padding and EOS symbol
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    # use lattic to find the N-best list
+                    n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
+
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
+            else:
+                beam_symbols_matrix = np.array(outputs[0]).T
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(decoder_y[b_idx, 1:])
+                    src = list(encoder_x[b_idx, :])
+                    # remove padding and EOS symbol
+                    src = [s for s in src if s != test_feed.PAD_ID]
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[b_idx, :].tolist()
+                    # use lattic to find the N-best list
+                    if test_feed.EOS_ID in b_beam_symbol:
+                        n_best = [(1.0, b_beam_symbol[0:b_beam_symbol.index(test_feed.EOS_ID)])]
+                    else:
+                        n_best = [(1.0, b_beam_symbol)]
+                    all_srcs.append(src)
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
 
             local_t += 1
 
         # get error
-        return self.beam_error(all_refs, all_n_bests, name, test_feed.rev_vocab)
+        return self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
 
 
 class Word2SeqAutoEncoder(BaseWord2Seq):
@@ -799,10 +883,12 @@ class Word2Seq2Auto(BaseWord2Seq):
                 reconstruct_loss *= reconstruct_weights
 
                 # get final losses
-                self.decoder_loss_sum = tf.reduce_sum(decoder_loss)
-                self.reconstruct_loss_sum = tf.reduce_sum(reconstruct_loss)
-                self.decoder_loss_avg = self.decoder_loss_sum / tf.reduce_sum(decoder_weights)
-                self.reconstruct_loss_avg = self.reconstruct_loss_sum / tf.reduce_sum(reconstruct_weights)
+                self.decoder_loss_sum = tf.reduce_sum(decoder_loss, reduction_indices=1) / tf.reduce_sum(decoder_weights, reduction_indices=1)
+                self.reconstruct_loss_sum = tf.reduce_sum(reconstruct_loss) / tf.reduce_sum(reconstruct_weights, reduction_indices=1)
+
+                self.decoder_loss_avg = tf.reduce_mean(self.decoder_loss_sum)
+                self.reconstruct_loss_avg = tf.reduce_mean(self.reconstruct_loss_sum)
+
                 combine_loss = 0.7 * self.decoder_loss_avg + 0.3 * self.reconstruct_loss_avg
                 self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V2)
 

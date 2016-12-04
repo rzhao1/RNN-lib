@@ -16,7 +16,7 @@ tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar len
 tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
 tf.app.flags.DEFINE_bool("resume", True, "Resume training from the ckp at test_path")
-tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
+tf.app.flags.DEFINE_bool("forward", True, "Do decoding only")
 tf.app.flags.DEFINE_string("test_path", "run1480606784", "the dir to load checkpoint for forward only")
 
 FLAGS = tf.app.flags.FLAGS

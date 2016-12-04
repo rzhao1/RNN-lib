@@ -4,6 +4,9 @@ import json
 from nltk.tokenize.regexp import WordPunctTokenizer
 from collections import Counter
 
+"""
+Tony: Keep a copy of the original implementation of split_data, where test/valid/train is created randomly
+"""
 
 class WordSeqCorpus(object):
     train_x = None
@@ -13,7 +16,7 @@ class WordSeqCorpus(object):
     test_x = None
     test_y = None
 
-    def __init__(self, data_dir, train_name, valid_name, test_name, vocab_name, max_enc_len, max_dec_len, line_thres):
+    def __init__(self, data_dir, data_name, split_size, max_vocab_size, max_enc_len, max_dec_len, line_thres, vocab_file):
         """"
         :param line_thres: how many line will be merged as encoding sentensce
         :param split_size: size of training:valid:test
@@ -21,21 +24,22 @@ class WordSeqCorpus(object):
         """
 
         self._data_dir = data_dir
-        self._train_path = os.path.join(data_dir, train_name)
-        self._valid_path = os.path.join(data_dir, valid_name)
-        self._test_path = os.path.join(data_dir, test_name)
-        self.vocab_path = os.path.join(self._data_dir, vocab_name)
-        self._cache_dir = os.path.join(data_dir, train_name.replace(".txt", "_") + self.__class__.__name__)
+        self._data_name = data_name
+        self._cache_dir = os.path.join(data_dir, data_name.replace(".txt", "_") + "word_seq_split")
         if not os.path.exists(self._cache_dir):
             os.mkdir(self._cache_dir)
 
         self.tokenizer = WordPunctTokenizer().tokenize
         self.line_threshold = line_thres
+        self.split_size = split_size
+        self.max_vocab_size = max_vocab_size
+        self.vocab_path = os.path.join(self._data_dir, vocab_file)
         self.max_enc_len = max_enc_len
         self.max_dec_len = max_dec_len
         # try to load from existing file
         if not self.load_data():
-            self._parse_file()
+            with open(os.path.join(data_dir, data_name), "rb") as f:
+                self._parse_file(f.readlines(), split_size)
 
         # clip data
         self.train_x, self.train_y = self.clip_to_max_len(self.train_x, self.train_y)
@@ -43,7 +47,6 @@ class WordSeqCorpus(object):
         self.test_x, self.test_y = self.clip_to_max_len(self.test_x, self.test_y)
 
         # get vocabulary\
-        self.get_vocab()
         self.print_vocab_stats()
 
         self.print_stats("TRAIN", self.train_x, self.train_y)
@@ -66,11 +69,36 @@ class WordSeqCorpus(object):
         print("Raw vocab cnt %d with valid ratio %f" % (len(vocab_cnt), float(valid) / total))
 
     def get_vocab(self):
-        with open(self.vocab_path, "rb") as f:
-            lines = f.readlines()
-            lines = [l.strip() for l in lines]
-        self.vocab = lines
+        # get vocabulary dictionary
+        vocab_cnt = {}
+        for line in self.train_x:
+            for tkn in line.split():
+                cnt = vocab_cnt.get(tkn, 0)
+                vocab_cnt[tkn] = cnt + 1
+        vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
+        vocab_cnt = sorted(vocab_cnt, reverse=True)
+        vocab = [key for cnt, key in vocab_cnt]
+        cnts = [cnt for cnt, key in vocab_cnt]
+        total = np.sum(cnts)
+        valid = np.sum(cnts[0:self.max_vocab_size])
+        print("Raw vocab cnt %d with valid ratio %f" % (len(vocab), float(valid)/total))
 
+        cnts = [cnt for cnt, key in vocab_cnt]
+        total = float(np.sum(cnts))
+        valid = float(np.sum(cnts[0:self.max_vocab_size]))
+        print("Before cutting. Raw vocab size is %d with valid ratio %f" % (len(vocab), valid/total))
+        return vocab[0:self.max_vocab_size]
+
+    def oov(self, name, data):
+        oov_cnt = 0
+        total_cnt = 0
+        for line in data:
+            for tkn in line.split():
+                total_cnt += 1
+                if tkn not in self.vocab:
+                    oov_cnt += 1
+
+        print("%s oov %f" % (name, float(oov_cnt)/total_cnt))
 
     def clip_to_max_len(self, enc_data, dec_data):
         new_enc_data = [" ".join(x.split()[-self.max_enc_len:]) for x in enc_data]
@@ -87,66 +115,70 @@ class WordSeqCorpus(object):
         print ('%s encoder avg len %.2f max len %.2f of %d lines' % (name, avg_len, max_len, len(enc_data)))
         print ('%s decoder avg len %.2f max len %.2f of %d lines' % (name, dec_avg_len, dec_max_len, len(dec_data)))
 
-    def _parse_file(self):
+    def _parse_file(self, lines, split_size):
         """
         :param lines: Each line is a line from the file
         """
+        utterances = []
+        speakers = []
+        movies = {}
 
-        def read_data(name):
-            with open(name, 'rb') as f:
-                lines = f.readlines()
-            utterances = []
-            speakers = []
-            movies = {}
+        current_movie = []
+        current_name = []
+        for line in lines:
+            if "FILE_NAME" in line:
+                if current_movie:
+                    movies[current_name] = current_movie
+                current_name = line.strip()
+                current_movie = []
+            else:
+                current_movie.append(line.strip())
+        if current_movie:
+            movies[current_name] = current_movie
 
-            current_movie = []
-            current_name = []
-            for line in lines:
-                if "FILE_NAME" in line:
-                    if current_movie:
-                        movies[current_name] = current_movie
-                    current_name = line.strip()
-                    current_movie = []
-                else:
-                    current_movie.append(line.strip())
-            if current_movie:
-                movies[current_name] = current_movie
+        # shuffle movie here.
+        shuffle_keys = movies.keys()
+        np.random.shuffle(shuffle_keys)
+        for key in shuffle_keys:
+            speakers.append("$$$")
+            utterances.append("$$$")
+            speakers.extend([l.split("|||")[0] for l in movies[key]])
+            utterances.extend([" ".join(self.tokenizer(l.split("|||")[1])).lower() for l in movies[key]])
 
-            # shuffle movie here.
-            for key in movies.keys():
-                speakers.append("$$$")
-                utterances.append("$$$")
-                speakers.extend([l.split("|||")[0] for l in movies[key]])
-                utterances.extend([" ".join(self.tokenizer(l.split("|||")[1])).lower() for l in movies[key]])
+        total_size = len(utterances)
+        train_size = int(total_size * split_size[0] / np.sum(split_size))
+        valid_size = int(total_size * split_size[1] / np.sum(split_size))
 
-            content_xs = []
-            content_ys = []
-            # Pointer for decoder input
-            print("Begin creating data")
-            for idx, (spker, utt) in enumerate(zip(speakers, utterances)):
-                # if we are at "a" in $$$ a b c, ignore the input
-                if utt == "$$$" or "$$$" in utterances[max(0, idx - self.line_threshold): idx]:
-                    continue
+        content_xs = []
+        content_ys = []
+        # Pointer for decoder input
+        print("Begin creating data")
+        for idx, (spker, utt) in enumerate(zip(speakers, utterances)):
+            # if we are at "a" in $$$ a b c, ignore the input
+            if utt == "$$$" or "$$$" in utterances[max(0, idx - self.line_threshold): idx]:
+                continue
 
-                content_x = " <t> ".join(utterances[max(0, idx - self.line_threshold):idx])
-                if spker != speakers[idx - 1]:
-                    content_x += " <t>"
-                content_xs.append(content_x)
-                content_ys.append(utt)
-            return content_xs, content_ys
+            content_x = " <t> ".join(utterances[max(0, idx - self.line_threshold):idx])
+            if spker == speakers[idx - 1]:
+                content_x += " #"
+            content_xs.append(content_x)
+            content_ys.append(utt)
 
         # split the data
-        self.train_x, self.train_y = read_data(self._train_path)
-        self.valid_x, self.valid_y = read_data(self._valid_path)
-        self.test_x, self.test_y = read_data(self._test_path)
+        self.train_x = train_x = content_xs[0: train_size]
+        self.train_y = train_y = content_ys[0: train_size]
+        self.valid_x = valid_x = content_xs[train_size: train_size + valid_size]
+        self.valid_y = valid_y = content_ys[train_size: train_size + valid_size]
+        self.test_x = test_x = content_xs[train_size + valid_size:]
+        self.test_y = test_y = content_ys[train_size + valid_size:]
 
         # begin dumpping data to file
-        self.dump_data("train_x.txt", self.train_x)
-        self.dump_data("train_y.txt", self.train_y)
-        self.dump_data("valid_x.txt", self.valid_x)
-        self.dump_data("valid_y.txt", self.valid_y)
-        self.dump_data("test_x.txt", self.test_x)
-        self.dump_data("test_y.txt", self.test_y)
+        self.dump_data("train_x.txt", train_x)
+        self.dump_data("train_y.txt", train_y)
+        self.dump_data("valid_x.txt", valid_x)
+        self.dump_data("valid_y.txt", valid_y)
+        self.dump_data("test_x.txt", test_x)
+        self.dump_data("test_y.txt", test_y)
 
     def dump_data(self, file_name, lines):
         if os.path.exists(file_name):
