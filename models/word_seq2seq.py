@@ -194,7 +194,10 @@ class BaseWord2Seq(object):
             local_t += 1
 
         # get error
-        return self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
+        if num_batch is not None:
+            self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
+
+        return all_n_bests
 
 
 class Word2Seq(BaseWord2Seq):
@@ -319,13 +322,15 @@ class Word2Seq(BaseWord2Seq):
                 print("Save summary to %s" % log_dir)
                 self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
 
-    def train(self, global_t, sess, train_feed):
+    def train(self, global_t, sess, train_feed, update_limit=None):
         losses = []
         local_t = 0
         start_time = time.time()
         while True:
             batch = train_feed.next_batch()
             if batch is None:
+                break
+            if update_limit is not None and local_t >= update_limit:
                 break
             fetches = [self.train_ops, self.avg_loss]
             feed_dict, _, _ = self.batch_2_feed_dict(batch)
@@ -336,7 +341,7 @@ class Word2Seq(BaseWord2Seq):
             if local_t % (train_feed.num_batch / 50) == 0:
                 train_loss = np.mean(losses)
                 print("%.2f train loss %f perleixty %f" %
-                      (local_t / float(train_feed.num_batch), float(train_loss), np.exp(train_loss)))
+                      (train_feed.ptr / float(train_feed.num_batch), float(train_loss), np.exp(train_loss)))
         end_time = time.time()
 
         train_loss = np.mean(losses)

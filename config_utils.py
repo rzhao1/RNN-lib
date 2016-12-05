@@ -46,7 +46,7 @@ class Word2SeqConfig(object):
     init_lr = 0.001
     lr_hold = 1
     lr_decay = 0.6
-    keep_prob = 1.0
+    keep_prob = 0.7
     improve_threshold = 0.996
     patient_increase = 2.0
     early_stop = True

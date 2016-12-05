@@ -18,9 +18,9 @@ tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results direc
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
-tf.app.flags.DEFINE_bool("resume", False, "Resume training from the ckp at test_path")
-tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
-tf.app.flags.DEFINE_string("test_path", "run1480889041", "the dir to load checkpoint for forward only")
+tf.app.flags.DEFINE_bool("resume", True, "Resume training from the ckp at test_path")
+tf.app.flags.DEFINE_bool("forward", True, "Do decoding only")
+tf.app.flags.DEFINE_string("test_path", "run1480895465", "the dir to load checkpoint for forward only")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -106,8 +106,9 @@ def main():
             for epoch in range(base_epoch, config.max_epoch):
                 print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
 
-                train_feed.epoch_init(config.batch_size, shuffle=True)
-                global_t, train_loss = model.train(global_t, sess, train_feed)
+                if train_feed.num_batch is None or train_feed.ptr >= train_feed.num_batch:
+                    train_feed.epoch_init(config.batch_size, shuffle=True)
+                global_t, train_loss = model.train(global_t, sess, train_feed, update_limit=5000)
 
                 # begin validation
                 valid_feed.epoch_init(valid_config.batch_size, shuffle=False)
@@ -145,13 +146,10 @@ def main():
             print("Best valid loss %f and perpleixyt %f" % (best_valid_loss, np.exp(best_valid_loss)))
             print("Done training")
         else:
-            # do sampling to see what kind of sentences is generated
-            train_feed.epoch_init(test_config.batch_size, shuffle=True)
-            test_model.test("TEST", sess, train_feed, num_batch=2)
 
             # do sampling to see what kind of sentences is generated
             test_feed.epoch_init(test_config.batch_size, shuffle=True)
-            test_model.test("TEST", sess, test_feed, num_batch=2)
+            test_model.test("TEST", sess, test_feed, num_batch=20)
 
             # begin validation
             valid_feed.epoch_init(valid_config.batch_size, shuffle=False)
@@ -159,6 +157,15 @@ def main():
 
             test_feed.epoch_init(valid_config.batch_size, shuffle=False)
             valid_model.valid("TEST", sess, test_feed)
+
+            # dump everything to a file
+            test_feed.epoch_init(14, shuffle=False)
+            all_n_best = test_model.test("TEST", sess, test_feed, num_batch=None)
+            with open(os.path.join(log_dir, model.__class__.__name__+"_test.txt"), "wb") as f:
+                for best in all_n_best:
+                    for n in best:
+                        f.write(n + " ")
+                    f.write("\n")
 
 if __name__ == "__main__":
     main()
