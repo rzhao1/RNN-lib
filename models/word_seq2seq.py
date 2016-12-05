@@ -300,8 +300,15 @@ class Word2Seq(BaseWord2Seq):
                 weights = tf.to_float(tf.sign(labels))
                 losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits, labels)
                 losses *= weights
+
                 self.avg_loss = tf.reduce_sum(losses, reduction_indices=1) / tf.reduce_sum(weights, reduction_indices=1)
                 self.avg_loss = tf.reduce_mean(self.avg_loss)
+
+                if config.loss_avg_time:
+                    self.op_loss = self.avg_loss
+                else:
+                    self.op_loss = tf.reduce_mean(tf.reduce_sum(losses, reduction_indices=1))
+
 
                 # choose a optimizer
                 if config.op == "adam":
@@ -312,7 +319,7 @@ class Word2Seq(BaseWord2Seq):
                     optim = tf.train.GradientDescentOptimizer(self.learning_rate)
 
                 tvars = tf.trainable_variables()
-                grads, _ = tf.clip_by_global_norm(tf.gradients(self.avg_loss, tvars), config.grad_clip)
+                grads, _ = tf.clip_by_global_norm(tf.gradients(self.op_loss, tvars), config.grad_clip)
                 self.train_ops = optim.apply_gradients(zip(grads, tvars))
                 self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V2)
 
@@ -537,50 +544,16 @@ class Word2SeqAutoEncoder(BaseWord2Seq):
                 print("Save summary to %s" % log_dir)
                 self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
 
-    def prepare_for_beam(self, embedding, initial_state, decoder_inputs):
-        """
-        Map the decoder inputs into embedding. If using beam search, also tile the inputs by beam_size times
-        """
-        _, seq_len = decoder_inputs.get_shape()
-        if self.forward:
-            # for beam search, we need to duplicate the input (GO symbols) by beam_size times
-            # the initial state is also tiled by beam_size times
-            emb_inp = []
-            for i in range(seq_len):
-                embed = embedding_ops.embedding_lookup(embedding, decoder_inputs[:, i])
-                embed = tf.reshape(tf.tile(embed, [1, self.beam_size]), [-1, self.word_embed_size])
-                emb_inp.append(embed)
-
-            if self.num_layer > 1:
-                states = []
-                for init_s in initial_state:
-                    if type(init_s) is tf.nn.seq2seq.rnn_cell.LSTMStateTuple:
-                        tile_c = tf.reshape(tf.tile(init_s.c, [1, self.beam_size]), [-1, self.cell_size])
-                        tile_h = tf.reshape(tf.tile(init_s.h, [1, self.beam_size]), [-1, self.cell_size])
-                        init_s = tf.nn.seq2seq.rnn_cell.LSTMStateTuple(tile_c, tile_h)
-                    else:
-                        init_s = tf.reshape(tf.tile(init_s, [1, self.beam_size]), [-1, self.cell_size])
-                    states.append(init_s)
-                initial_state = tuple(states)
-            else:
-                if type(initial_state) is tf.nn.seq2seq.rnn_cell.LSTMStateTuple:
-                    tile_c = tf.reshape(tf.tile(initial_state.c, [1, self.beam_size]), [-1, self.cell_size])
-                    tile_h = tf.reshape(tf.tile(initial_state.h, [1, self.beam_size]), [-1, self.cell_size])
-                    initial_state = tf.nn.seq2seq.rnn_cell.LSTMStateTuple(tile_c, tile_h)
-                else:
-                    initial_state = tf.reshape(tf.tile(initial_state, [1, self.beam_size]), [-1, self.cell_size])
-        else:
-            emb_inp = [embedding_ops.embedding_lookup(embedding, decoder_inputs[:, i]) for i in range(seq_len)]
-
-        return emb_inp, initial_state
-
-    def train(self, global_t, sess, train_feed):
+    def train(self, global_t, sess, train_feed, update_limit=None):
         decoder_losses = []
         reconstruct_losses = []
 
         local_t = 0
         start_time = time.time()
         while True:
+            if update_limit is not None and local_t >= update_limit:
+                break
+
             batch = train_feed.next_batch()
             if batch is None:
                 break
@@ -599,7 +572,7 @@ class Word2SeqAutoEncoder(BaseWord2Seq):
                 train_dec_loss = np.mean(decoder_losses)
                 train_reconstruct_loss = np.mean(reconstruct_losses)
                 print("%.2f train decoder loss %f perleixty %f :: train reconstruct loss %f perleixty %f" %
-                      (local_t / float(train_feed.num_batch), float(train_dec_loss), np.exp(train_dec_loss),
+                      (train_feed.ptr / float(train_feed.num_batch), float(train_dec_loss), np.exp(train_dec_loss),
                        float(train_reconstruct_loss), np.exp(train_reconstruct_loss)))
         end_time = time.time()
 
@@ -639,73 +612,15 @@ class Word2SeqAutoEncoder(BaseWord2Seq):
         valid_dec_loss = np.mean(decoder_losses)
         valid_reconstruct_loss = np.mean(reconstruct_losses)
 
-        print("Valid decoder loss %f perleixty %f :: valid reconstruct loss %f perleixty %f"
-              % (float(valid_dec_loss), np.exp(valid_dec_loss),
+        print("%s decoder loss %f perleixty %f :: valid reconstruct loss %f perleixty %f"
+              % (name, float(valid_dec_loss), np.exp(valid_dec_loss),
                  float(valid_reconstruct_loss), np.exp(valid_reconstruct_loss)))
         return valid_dec_loss
 
-    def test(self, name, sess, test_feed, num_batch=None):
-        all_srcs = []
-        all_refs = []
-        all_n_bests = [] # 2D list. List of List of N-best
-        local_t = 0
-        if self.loop_function == "beam":
-            fetch = [self.decoder_logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
-        else:
-            fetch = [self.beam_symbols]
-        while True:
-            batch = test_feed.next_batch()
-            if batch is None or (num_batch is not None and local_t > num_batch):
-                break
-            encoder_len, decoder_len, encoder_x, decoder_y = batch
-            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
-            outputs = sess.run(fetch, feed_dict)
-            # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
-            # label: [B x max_dec_len+1]
-
-            if self.loop_function == "beam":
-                pred, symbol, path, probs = outputs
-                beam_symbols_matrix = np.array(symbol)
-                beam_path_matrix = np.array(path)
-                beam_log_matrix = np.array(probs)
-
-                for b_idx in range(test_feed.batch_size):
-                    ref = list(decoder_y[b_idx, 1:])
-                    src = list(encoder_x[b_idx, :])
-                    # remove padding and EOS symbol
-                    src = [s for s in src if s != test_feed.PAD_ID]
-                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
-                    b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                    b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                    b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                    # use lattic to find the N-best list
-                    n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
-
-                    all_srcs.append(src)
-                    all_refs.append(ref)
-                    all_n_bests.append(n_best)
-            else:
-                beam_symbols_matrix = np.array(outputs[0]).T
-                for b_idx in range(test_feed.batch_size):
-                    ref = list(decoder_y[b_idx, 1:])
-                    src = list(encoder_x[b_idx, :])
-                    # remove padding and EOS symbol
-                    src = [s for s in src if s != test_feed.PAD_ID]
-                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
-                    b_beam_symbol = beam_symbols_matrix[b_idx, :].tolist()
-                    # use lattic to find the N-best list
-                    if test_feed.EOS_ID in b_beam_symbol:
-                        n_best = [(1.0, b_beam_symbol[0:b_beam_symbol.index(test_feed.EOS_ID)])]
-                    else:
-                        n_best = [(1.0, b_beam_symbol)]
-                    all_srcs.append(src)
-                    all_refs.append(ref)
-                    all_n_bests.append(n_best)
-
-            local_t += 1
-
-        # get error
-        return self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
+    def batch_2_feed_dict(self, batch):
+        encoder_len, decoder_len, encoder_x, decoder_y = batch
+        feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
+        return feed_dict, encoder_x, decoder_y
 
 
 class Word2Seq2Auto(BaseWord2Seq):
@@ -945,6 +860,7 @@ class Word2Seq2Auto(BaseWord2Seq):
         feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
         return feed_dict, encoder_x, decoder_y
 
+
 class Future2Seq(BaseWord2Seq):
 
     def __init__(self, sess, config, vocab_size, eos_id, log_dir=None, forward=False):
@@ -1105,50 +1021,16 @@ class Future2Seq(BaseWord2Seq):
             print("Save summary to %s" % log_dir)
             self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
 
-    def prepare_for_beam(self, embedding, initial_state, decoder_inputs):
-        """
-        Map the decoder inputs into embedding. If using beam search, also tile the inputs by beam_size times
-        """
-        _, seq_len = decoder_inputs.get_shape()
-        if self.forward:
-            # for beam search, we need to duplicate the input (GO symbols) by beam_size times
-            # the initial state is also tiled by beam_size times
-            emb_inp = []
-            for i in range(seq_len):
-                embed = embedding_ops.embedding_lookup(embedding, decoder_inputs[:, i])
-                embed = tf.reshape(tf.tile(embed, [1, self.beam_size]), [-1, self.word_embed_size])
-                emb_inp.append(embed)
-
-            if self.num_layer > 1:
-                states = []
-                for init_s in initial_state:
-                    if type(init_s) is tf.nn.seq2seq.rnn_cell.LSTMStateTuple:
-                        tile_c = tf.reshape(tf.tile(init_s.c, [1, self.beam_size]), [-1, self.cell_size])
-                        tile_h = tf.reshape(tf.tile(init_s.h, [1, self.beam_size]), [-1, self.cell_size])
-                        init_s = tf.nn.seq2seq.rnn_cell.LSTMStateTuple(tile_c, tile_h)
-                    else:
-                        init_s = tf.reshape(tf.tile(init_s, [1, self.beam_size]), [-1, self.cell_size])
-                    states.append(init_s)
-                initial_state = tuple(states)
-            else:
-                if type(initial_state) is tf.nn.seq2seq.rnn_cell.LSTMStateTuple:
-                    tile_c = tf.reshape(tf.tile(initial_state.c, [1, self.beam_size]), [-1, self.cell_size])
-                    tile_h = tf.reshape(tf.tile(initial_state.h, [1, self.beam_size]), [-1, self.cell_size])
-                    initial_state = tf.nn.seq2seq.rnn_cell.LSTMStateTuple(tile_c, tile_h)
-                else:
-                    initial_state = tf.reshape(tf.tile(initial_state, [1, self.beam_size]), [-1, self.cell_size])
-        else:
-            emb_inp = [embedding_ops.embedding_lookup(embedding, decoder_inputs[:, i]) for i in range(seq_len)]
-
-        return emb_inp, initial_state
-
-    def train(self, global_t, sess, train_feed):
+    def train(self, global_t, sess, train_feed, update_limit=None):
         y_losses = []
         z_losses = []
 
         local_t = 0
         start_time = time.time()
         while True:
+            if local_t >= update_limit:
+                break
+
             batch = train_feed.next_batch()
             if batch is None:
                 break
@@ -1168,7 +1050,7 @@ class Future2Seq(BaseWord2Seq):
                 train_dec_loss = np.mean(y_losses)
                 train_reconstruct_loss = np.mean(z_losses)
                 print("%.2f train Y loss %f perleixty %f :: train Z loss %f perleixty %f" %
-                      (local_t / float(train_feed.num_batch), float(train_dec_loss), np.exp(train_dec_loss),
+                      (train_feed.ptr / float(train_feed.num_batch), float(train_dec_loss), np.exp(train_dec_loss),
                        float(train_reconstruct_loss), np.exp(train_reconstruct_loss)))
         end_time = time.time()
 
@@ -1215,68 +1097,8 @@ class Future2Seq(BaseWord2Seq):
                  float(valid_reconstruct_loss), np.exp(valid_reconstruct_loss)))
         return valid_dec_loss
 
-    def test(self, name, sess, test_feed, num_batch=None):
-        all_srcs = []
-        all_refs = []
-        all_n_bests = [] # 2D list. List of List of N-best
-        local_t = 0
-        if self.loop_function == "beam":
-            fetch = [self.y_logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
-        else:
-            fetch = [self.beam_symbols]
-
-        while True:
-            batch = test_feed.next_batch()
-            if batch is None or (num_batch is not None and local_t > num_batch):
-                break
-            batch_c_len, batch_x_len, batch_y_len, batch_z_len, c_batch, x_batch, y_batch, z_batch = batch
-            feed_dict = {self.c_batch:c_batch, self.x_batch: x_batch, self.y_batch: y_batch, self.z_batch: z_batch,
-                         self.c_len:batch_c_len, self.x_len: batch_x_len, self.y_len: batch_y_len, self.z_len: batch_z_len}
-            outputs = sess.run(fetch, feed_dict)
-            # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
-            # label: [B x max_dec_len+1]
-
-            if self.loop_function == "beam":
-                pred, symbol, path, probs = outputs
-                beam_symbols_matrix = np.array(symbol)
-                beam_path_matrix = np.array(path)
-                beam_log_matrix = np.array(probs)
-
-                for b_idx in range(test_feed.batch_size):
-                    ref = list(y_batch[b_idx, 1:])
-                    src = list(x_batch[b_idx, :])
-                    # remove padding and EOS symbol
-                    src = [s for s in src if s != test_feed.PAD_ID]
-                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
-                    b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                    b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                    b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                    # use lattic to find the N-best list
-                    n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
-
-                    all_srcs.append(src)
-                    all_refs.append(ref)
-                    all_n_bests.append(n_best)
-
-            else:
-                beam_symbols_matrix = np.array(outputs[0]).T
-                for b_idx in range(test_feed.batch_size):
-                    ref = list(y_batch[b_idx, 1:])
-                    src = list(x_batch[b_idx, :])
-                    # remove padding and EOS symbol
-                    src = [s for s in src if s != test_feed.PAD_ID]
-                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
-                    b_beam_symbol = beam_symbols_matrix[b_idx, :].tolist()
-                    # use lattic to find the N-best list
-                    if test_feed.EOS_ID in b_beam_symbol:
-                        n_best = [(1.0, b_beam_symbol[0:b_beam_symbol.index(test_feed.EOS_ID)])]
-                    else:
-                        n_best = [(1.0, b_beam_symbol)]
-                    all_srcs.append(src)
-                    all_refs.append(ref)
-                    all_n_bests.append(n_best)
-
-            local_t += 1
-
-        # get error
-        return self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
+    def batch_2_feed_dict(self, batch):
+        batch_c_len, batch_x_len, batch_y_len, batch_z_len, c_batch, x_batch, y_batch, z_batch = batch
+        feed_dict = {self.c_batch: c_batch, self.x_batch: x_batch, self.y_batch: y_batch, self.z_batch: z_batch,
+                     self.c_len: batch_c_len, self.x_len: batch_x_len, self.y_len: batch_y_len, self.z_len: batch_z_len}
+        return feed_dict, x_batch, y_batch

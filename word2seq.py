@@ -20,7 +20,7 @@ tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
 tf.app.flags.DEFINE_bool("resume", True, "Resume training from the ckp at test_path")
 tf.app.flags.DEFINE_bool("forward", True, "Do decoding only")
-tf.app.flags.DEFINE_string("test_path", "run1480895465", "the dir to load checkpoint for forward only")
+tf.app.flags.DEFINE_string("test_path", "run1480907827", "the dir to load checkpoint for forward only")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -57,6 +57,11 @@ def main():
     else:
         log_dir = os.path.join(FLAGS.work_dir, "run" + str(int(time.time())))
         os.mkdir(log_dir)
+
+    # dump log file to the log_dir
+    if not FLAGS.forward:
+        with open(os.path.join(log_dir, "meta.txt"), "wb") as f:
+            f.write(pp(config, output=False))
 
     # begin training
     with tf.Session() as sess:
@@ -95,12 +100,6 @@ def main():
         else:
             print("Created models with fresh parameters.")
             sess.run(tf.initialize_all_variables())
-
-        valid_feed.epoch_init(valid_config.batch_size, shuffle=False)
-        valid_model.valid("INIT_VALID", sess, valid_feed)
-
-        test_feed.epoch_init(test_config.batch_size, shuffle=True)
-        test_model.test("INIT_TEST", sess, test_feed, num_batch=1)
 
         if not FLAGS.forward:
             for epoch in range(base_epoch, config.max_epoch):
@@ -147,6 +146,16 @@ def main():
             print("Done training")
         else:
 
+
+            # dump everything to a file
+            test_feed.epoch_init(14, shuffle=False)
+            all_n_best = test_model.test("TEST", sess, test_feed, num_batch=None)
+            with open(os.path.join(log_dir, "%s_%s_test.txt"% (model.__class__.__name__, config.loop_function)), "wb") as f:
+                for best in all_n_best:
+                    for score, n in best:
+                        f.write(" ".join([train_feed.rev_vocab[word] for word in n]) + " ")
+                    f.write("\n")
+
             # do sampling to see what kind of sentences is generated
             test_feed.epoch_init(test_config.batch_size, shuffle=True)
             test_model.test("TEST", sess, test_feed, num_batch=20)
@@ -157,15 +166,6 @@ def main():
 
             test_feed.epoch_init(valid_config.batch_size, shuffle=False)
             valid_model.valid("TEST", sess, test_feed)
-
-            # dump everything to a file
-            test_feed.epoch_init(14, shuffle=False)
-            all_n_best = test_model.test("TEST", sess, test_feed, num_batch=None)
-            with open(os.path.join(log_dir, model.__class__.__name__+"_test.txt"), "wb") as f:
-                for best in all_n_best:
-                    for n in best:
-                        f.write(n + " ")
-                    f.write("\n")
 
 if __name__ == "__main__":
     main()

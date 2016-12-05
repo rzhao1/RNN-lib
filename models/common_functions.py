@@ -86,9 +86,13 @@ def extract_argmax_and_embed(embedding, max_symbols, output_projection=None, upd
 
 def gumbel_sample_and_embed(embedding, gumble_symbols, max_gumbel_noise=1.0):
 
-    def loop_function(prev, _):
+    def loop_function(prev, i):
         matrix_U = -1.0 * tf.log(-1.0*tf.log(tf.random_uniform(tf.shape(prev), minval=0.0, maxval=max_gumbel_noise)))
-        prev_symbol = tf.argmax(tf.sub(prev, matrix_U), dimension=1)
+        if i <= 1:
+            prev_symbol = tf.argmax(tf.sub(prev, matrix_U)[:, 8:], dimension=1) + 8
+        else:
+            prev_symbol = tf.argmax(tf.sub(prev, matrix_U), dimension=1)
+
         gumble_symbols.append(prev_symbol)
         # Note that gradients will not propagate through the second parameter of
         # embedding_lookup.

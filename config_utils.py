@@ -27,6 +27,7 @@ class Word2SeqConfig(object):
     op = "adam"
     cell_type = "gru"
     loop_function = "gumble"
+    loss_avg_time = False
 
     # general config
     grad_clip = 10.0
@@ -62,7 +63,7 @@ class Word2SeqAutoConfig(object):
     init_w = 0.05
     batch_size = 64
     embed_size = 300
-    cell_size = 800
+    cell_size = 1000
     num_layer = 1
     max_epoch = 20
     beam_size = 5
@@ -122,10 +123,10 @@ class FutureSeqConfig(object):
     init_w = 0.05
     batch_size = 64
     embed_size = 300
-    cell_size = 800
+    cell_size = 1000
     num_layer = 1
-    max_epoch = 20
-    beam_size = 20
+    max_epoch = 40
+    beam_size = 5
 
     max_utt_size = 30
     context_size = 5

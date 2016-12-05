@@ -382,43 +382,48 @@ class FutureSeqCorpus(object):
     vocab = None
     movie_profile = None
 
-    def __init__(self, data_dir, data_name, split_size, max_vocab_size, context_size):
+    def __init__(self, data_dir, data_name, valid_name, test_name, vocab_name, context_size):
 
         self._data_dir = data_dir
         self._data_name = data_name
+        self._train_path = os.path.join(self._data_dir, data_name)
+        self._valid_path = os.path.join(self._data_dir, valid_name)
+        self._test_path = os.path.join(self._data_dir, test_name)
+        self._vocab_path = os.path.join(self._data_dir, vocab_name)
+
         self._cache_dir = os.path.join(data_dir, data_name.replace(".txt", "_") + self.__class__.__name__)
         if not os.path.exists(self._cache_dir):
             os.mkdir(self._cache_dir)
 
         self.tokenizer = WordPunctTokenizer().tokenize
-        self.split_size = split_size
-        self.max_vocab_size = max_vocab_size
         self.context_size = context_size
         # try to load from existing file
         if not self.load_data():
-            with open(os.path.join(data_dir, data_name), "rb") as f:
-                self._parse_file(f.readlines(), split_size)
+            self._parse_file()
 
         # get vocabulary\
-        self.vocab = self.get_vocab()
+        self.get_vocab()
 
         self.print_stats("TRAIN", self.train_data)
         self.print_stats("VALID", self.valid_data)
         self.print_stats("TEST", self.test_data)
 
     def get_vocab(self):
+        # read vocab file
+        with open(self._vocab_path, "rb") as f:
+            lines = f.readlines()
+        self.vocab = [l.strip() for l in lines]
+
         # get vocabulary dictionary
         all_words = []
         for _, _, utt in self.data_lines:
             all_words.extend(utt.split())
 
+        vocab_set = set(self.vocab)
         vocab_cnt = Counter(all_words).most_common()
-        vocab = [w for w, cnt in vocab_cnt]
-        cnts = [cnt for w, cnt in vocab_cnt]
-        total = float(np.sum(cnts))
-        valid = float(np.sum(cnts[0:self.max_vocab_size]))
-        print("Raw vocab cnt %d with valid ratio %f" % (len(cnts), valid/total))
-        return vocab[0:self.max_vocab_size]
+        total = float(np.sum([cnt for w, cnt in vocab_cnt]))
+        valid = float(np.sum([cnt for w, cnt in vocab_cnt if w in vocab_set]))
+        print("Raw vocab cnt %d with valid ratio %f" % (len(vocab_cnt), valid/total))
 
     def print_stats(self, name, data):
         print ('%s data %d lines' % (name, len(data)))
@@ -427,43 +432,63 @@ class FutureSeqCorpus(object):
         y_len = [len(self.data_lines[y][2].split()) for ctx, x, y, z in data]
         print ('%s y avg len %.2f max len %.2f of %d lines' % (name, np.mean(y_len), np.max(y_len), len(y_len)))
 
-
-    def _parse_file(self, lines, split_size):
+    def _parse_file(self):
         """
         :param lines: Each line is a line from the file
         """
+        # read train_valid and test
+        def read_file(name):
+            with open(name, "rb") as f:
+                lines = f.readlines()
+                lines = [l.strip() for l in lines]
+            return lines
+
+        train_lines = read_file(self._train_path)
+        valid_lines = read_file(self._valid_path)
+        test_lines = read_file(self._test_path)
+
+        lines = train_lines + valid_lines +test_lines
+
         data_lines = []
         movies = {}
 
         current_movie = []
-        current_name = []
-        for line in lines:
+        current_name = None
+        movie_keys = []
+        train_keys = set()
+        valid_keys = set()
+      
+        for idx, line in enumerate(lines):
             if "FILE_NAME" in line:
                 if current_movie:
                     movies[current_name] = current_movie
                 current_name = line.strip()
                 current_movie = []
+                movie_keys.append(current_name)
+                if idx < len(train_lines):
+                    train_keys.add(current_name)
+                elif idx < len(train_lines) + len(valid_lines):
+                    valid_keys.add(current_name)
             else:
                 current_movie.append(line.strip())
         if current_movie:
             movies[current_name] = current_movie
 
         # shuffle movie here.
-        shuffle_keys = movies.keys()
-        np.random.shuffle(shuffle_keys)
-        for key in shuffle_keys:
+        for key in movie_keys:
             for line in movies[key]:
                 speaker = line.split("|||")[0]
                 utt = " ".join(self.tokenizer(line.split("|||")[1])).lower()
                 data_lines.append([key, speaker, utt])
 
-        content = []
-        movie_word_cnt = {}
         # Pointer for decoder input
         print("Begin creating data")
         idx = 0
-        while True:
+        self.train_data = []
+        self.valid_data = []
+        self.test_data = []
 
+        while True:
             if idx >= len(data_lines):
                 break
 
@@ -472,6 +497,7 @@ class FutureSeqCorpus(object):
             # y include: the current utterance id
             # z include: the next uttearnce id
             # find the previous utt. If this is the first/second utt, we ignore this line
+
             if idx < 2 or data_lines[idx-1][0] != key or data_lines[idx-2][0] != key:
                 idx += 1
                 continue
@@ -487,19 +513,18 @@ class FutureSeqCorpus(object):
                 context_utt.append(t_id)
 
             context_utt = context_utt[::-1]
-            content.append((context_utt, idx - 1, idx, idx +1))
-            idx += 2
+            new_line = (context_utt, idx-1, idx, idx+1)
+            if key in train_keys:
+                self.train_data.append(new_line)
+            elif key in valid_keys:
+                self.valid_data.append(new_line)
+            else:
+                self.test_data.append(new_line)
 
-        total_size = len(content)
-        train_size = int(total_size * split_size[0] / np.sum(split_size))
-        valid_size = int(total_size * split_size[1] / np.sum(split_size))
+            idx += 1
 
         # count the words
         self.data_lines = data_lines
-        # split the data
-        self.train_data = content[0: train_size]
-        self.valid_data = content[train_size: train_size + valid_size]
-        self.test_data = content[train_size + valid_size:]
 
         # begin dumpping data to file
         self.dump_data("lines.txt", self.data_lines)

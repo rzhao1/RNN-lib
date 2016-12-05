@@ -11,12 +11,15 @@ from config_utils import FutureSeqConfig as Config
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
 tf.app.flags.DEFINE_string("data_file", "open_subtitle.txt", "the file that contains the raw data")
+tf.app.flags.DEFINE_string("vocab_file", "vocab.txt", "the file that contains the given validation data")
+tf.app.flags.DEFINE_string("valid_data", "valid.txt", "the file that contains the given testing data")
+tf.app.flags.DEFINE_string("test_data", "test.txt", "the file that contains the given vocabulary")
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use.")
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
-tf.app.flags.DEFINE_bool("resume", True, "Resume training from the ckp at test_path")
-tf.app.flags.DEFINE_bool("forward", True, "Do decoding only")
+tf.app.flags.DEFINE_bool("resume", False, "Resume training from the ckp at test_path")
+tf.app.flags.DEFINE_bool("forward", False, "Do decoding only")
 tf.app.flags.DEFINE_string("test_path", "run1480606784", "the dir to load checkpoint for forward only")
 
 FLAGS = tf.app.flags.FLAGS
@@ -37,7 +40,7 @@ def main():
     pp(config)
 
     # load corpus
-    api = FutureSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [99, 0.5, 0.5], FLAGS.max_vocab_size, config.context_size)
+    api = FutureSeqCorpus(FLAGS.data_dir, FLAGS.data_file, FLAGS.valid_data, FLAGS.test_data, FLAGS.vocab_file, config.context_size)
     corpus_data = api.get_corpus()
 
 
@@ -99,9 +102,10 @@ def main():
         if not FLAGS.forward:
             for epoch in range(base_epoch, config.max_epoch):
                 print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
-
-                train_feed.epoch_init(config.batch_size, shuffle=True)
-                global_t, train_loss = model.train(global_t, sess, train_feed)
+                
+                if train_feed.num_batch is None or train_feed.ptr >= train_feed.num_batch:
+                    train_feed.epoch_init(config.batch_size, shuffle=True)
+                global_t, train_loss = model.train(global_t, sess, train_feed, update_limit=5000)
 
                 # begin validation
                 valid_feed.epoch_init(valid_config.batch_size, shuffle=False)

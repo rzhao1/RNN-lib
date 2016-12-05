@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 from data_utils.split_data import WordSeqCorpus
 from data_utils.data_feed import WordSeqDataFeed
-from models.word_seq2seq import Word2Seq2Auto as Model
+from models.word_seq2seq import Word2SeqAutoEncoder as Model
 from config_utils import Word2SeqAutoConfig as Config
 
 # constants
@@ -20,7 +20,7 @@ tf.app.flags.DEFINE_string("max_vocab_size", 20000, "The top N vocabulary we use
 tf.app.flags.DEFINE_bool("save_model", True, "Create checkpoints")
 tf.app.flags.DEFINE_bool("resume", False, "Resume training from the ckp at test_path")
 tf.app.flags.DEFINE_bool("forward", True, "Do decoding only")
-tf.app.flags.DEFINE_string("test_path", "run1480312659", "the dir to load checkpoint for forward only")
+tf.app.flags.DEFINE_string("test_path", "run1480917145", "the dir to load checkpoint for forward only")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -105,8 +105,9 @@ def main():
             for epoch in range(base_epoch, config.max_epoch):
                 print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
 
-                train_feed.epoch_init(config.batch_size, shuffle=True)
-                global_t, train_loss = model.train(global_t, sess, train_feed)
+                if train_feed.num_batch is None or train_feed.ptr >= train_feed.num_batch:
+                    train_feed.epoch_init(config.batch_size, shuffle=True)
+                global_t, train_loss = model.train(global_t, sess, train_feed, update_limit=5000)
 
                 # begin validation
                 valid_feed.epoch_init(valid_config.batch_size, shuffle=False)
@@ -144,9 +145,23 @@ def main():
             print("Best valid loss %f and perpleixyt %f" % (best_valid_loss, np.exp(best_valid_loss)))
             print("Done training")
         else:
+            # dump everything to a file
+            test_feed.epoch_init(14, shuffle=False)
+            all_n_best = test_model.test("TEST", sess, test_feed, num_batch=None)
+            with open(os.path.join(log_dir, "%s_%s_test.txt" % (model.__class__.__name__, config.loop_function)),
+                      "wb") as f:
+                for best in all_n_best:
+                    for score, n in best:
+                        f.write(" ".join([train_feed.rev_vocab[word] for word in n]) + " ")
+                    f.write("\n")
+
+            # do sampling to see what kind of sentences is generated
+            train_feed.epoch_init(test_config.batch_size, shuffle=True)
+            test_model.test("TRAIN", sess, train_feed, num_batch=50)
+
             # do sampling to see what kind of sentences is generated
             test_feed.epoch_init(test_config.batch_size, shuffle=True)
-            test_model.test("TEST", sess, test_feed, num_batch=100)
+            test_model.test("TEST", sess, test_feed, num_batch=50)
 
             # begin validation
             valid_feed.epoch_init(valid_config.batch_size, shuffle=False)
