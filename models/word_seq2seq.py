@@ -197,7 +197,7 @@ class BaseWord2Seq(object):
         if num_batch is not None:
             self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
 
-        return all_n_bests
+        return all_srcs, all_refs, all_n_bests
 
 
 class Word2Seq(BaseWord2Seq):
