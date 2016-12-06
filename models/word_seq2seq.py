@@ -642,6 +642,8 @@ class Word2Seq2Auto(BaseWord2Seq):
         # max_decoder_size including GO and EOS
         self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, self.max_decoder_size), name="decoder_seq")
         self.encoder_lens = tf.placeholder(dtype=tf.int32, shape=(None), name="encoder_lens")
+        self.decoder_lens = tf.placeholder(dtype=tf.int32, shape=(None), name="decoder_lens")
+
 
         # include GO sent and EOS
         self.learning_rate = tf.Variable(float(config.init_lr), trainable=False)
@@ -706,16 +708,19 @@ class Word2Seq2Auto(BaseWord2Seq):
 
                 # No back propagation and forward only for testing
                 # run decoder to get sequence outputs
-                dec_outputs, beam_symbols, beam_path, log_beam_probs, last_decoder_state = self.beam_rnn_decoder(
+                dec_outputs, beam_symbols, beam_path, log_beam_probs, dec_states = self.beam_rnn_decoder(
                     decoder_embedding=decoder_embedding,
                     initial_state=decoder_init_state,
                     embedding=embedding,
-                    cell=cell_dec)
+                    cell=cell_dec, return_all_states=True)
 
                 self.decoder_logits = dec_outputs
                 self.beam_symbols = beam_symbols
                 self.beam_path = beam_path
                 self.log_beam_probs = log_beam_probs
+
+                dec_states = tf.pack(dec_states, axis=1)
+                last_decoder_state = last_relevant(dec_states, self.decoder_lens-1, self.cell_size, self.max_decoder_size-1)
 
             with tf.variable_scope("reconstruction"):
                 if config.cell_type == "gru":
@@ -860,6 +865,233 @@ class Word2Seq2Auto(BaseWord2Seq):
         feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
         return feed_dict, encoder_x, decoder_y
 
+class Past2Seq(BaseWord2Seq):
+
+    def __init__(self, sess, config, vocab_size, eos_id, log_dir=None, forward=False):
+        self.batch_size = config.batch_size
+        self.cell_size = cell_size = config.cell_size
+        self.vocab_size = vocab_size
+        self.max_utt_size = config.max_utt_size
+        self.forward = forward
+        self.beam_size = config.beam_size
+        self.word_embed_size = config.embed_size
+        self.is_lstm_cell = config.cell_type == "lstm"
+        self.eos_id = eos_id
+        self.num_layer = config.num_layer
+        self.loop_function = config.loop_function
+
+        self.c_batch = tf.placeholder(dtype=tf.int32, shape=(None, None, self.max_utt_size), name="c_sequence")
+        self.x_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="x_sequence")
+        self.y_batch = tf.placeholder(dtype=tf.int32, shape=(None, self.max_utt_size), name="y_sequence")
+        self.c_len = tf.placeholder(dtype=tf.int32, shape=(None), name="c_lens")
+        self.x_len = tf.placeholder(dtype=tf.int32, shape=(None), name="x_lens")
+        self.y_len = tf.placeholder(dtype=tf.int32, shape=(None), name="y_lens")
+
+        # include GO sent and EOS
+        self.learning_rate = tf.Variable(float(config.init_lr), trainable=False)
+        self.learning_rate_decay_op = self.learning_rate.assign(tf.mul(self.learning_rate, config.lr_decay))
+
+        max_x_sent_len = array_ops.shape(self.x_batch)[1]
+        max_c_sent_len = array_ops.shape(self.c_batch)[1]
+
+        # As our current version decoder is fixed-size,
+        # the decoder is in format GO sent EOS. Mostly we either work with GO sent or sent EOS. that is max_decoder-1
+        max_y_minus_one = self.max_utt_size - 1
+
+        with variable_scope.variable_scope("word_embedding"):
+            embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
+
+            c_embedding = embedding_ops.embedding_lookup(embedding, tf.squeeze(tf.reshape(self.c_batch, [-1, 1]), squeeze_dims=[1]))
+            c_embedding = tf.reshape(c_embedding, [-1, max_c_sent_len, self.max_utt_size, config.embed_size])
+            c_embedding = tf.reduce_sum(c_embedding, reduction_indices=2) # collapse the max_utt_size dimension [2]
+
+            x_embedding = embedding_ops.embedding_lookup(embedding, tf.squeeze(tf.reshape(self.x_batch, [-1, 1]), squeeze_dims=[1]))
+            x_embedding = tf.reshape(x_embedding, [-1, max_x_sent_len, config.embed_size])
+
+        with tf.variable_scope("context"):
+            cell_cxt = tf.nn.rnn_cell.GRUCell(cell_size)
+            if config.keep_prob < 1.0:
+                c_embedding = tf.nn.dropout(c_embedding, keep_prob=config.keep_prob)
+                cell_cxt = rnn_cell.DropoutWrapper(cell_cxt, output_keep_prob=config.keep_prob)
+
+            if config.num_layer > 1:
+                cell_cxt = rnn_cell.MultiRNNCell([cell_cxt] * config.num_layer, state_is_tuple=True)
+
+            _, c_last_state = rnn.dynamic_rnn(cell_cxt, c_embedding, sequence_length=self.c_len, dtype=tf.float32)
+
+        with tf.variable_scope('encoder'):
+            cell_enc = tf.nn.rnn_cell.GRUCell(cell_size)
+            cell_enc = tf.nn.rnn_cell.OutputProjectionWrapper(cell_enc, vocab_size)
+
+            if config.keep_prob < 1.0:
+                x_embedding = tf.nn.dropout(x_embedding, keep_prob=config.keep_prob)
+                cell_enc = rnn_cell.DropoutWrapper(cell_enc, output_keep_prob=config.keep_prob)
+
+            if config.num_layer > 1:
+                cell_enc = rnn_cell.MultiRNNCell([cell_enc] * config.num_layer, state_is_tuple=True)
+
+            _, x_last_state = rnn.dynamic_rnn(cell_enc, x_embedding, initial_state=c_last_state,
+                                              sequence_length=self.x_len, dtype=tf.float32)
+        with tf.variable_scope('decoder'):
+            # post process the decoder embedding inputs and encoder_last_state
+            # Tony decoder embedding we need to remove the last column
+            y_embedding, y_init_state = self.prepare_for_beam(embedding, x_last_state,
+                                                                          self.y_batch[:, 0:max_y_minus_one])
+            cell_dec = tf.nn.rnn_cell.GRUCell(cell_size)
+
+            # output project to vocabulary size
+            cell_dec = tf.nn.rnn_cell.OutputProjectionWrapper(cell_dec, vocab_size)
+
+            if config.keep_prob < 1.0:
+                cell_dec = rnn_cell.DropoutWrapper(cell_dec, input_keep_prob=config.keep_prob,
+                                                   output_keep_prob=config.keep_prob)
+
+            if config.num_layer > 1:
+                cell_dec = rnn_cell.MultiRNNCell([cell_dec] * config.num_layer, state_is_tuple=True)
+
+            # No back propagation and forward only for testing
+            # run decoder to get sequence outputs
+            dec_outputs, beam_symbols, beam_path, log_beam_probs, y_states = self.beam_rnn_decoder(
+                decoder_embedding=y_embedding,
+                initial_state=y_init_state,
+                embedding=embedding,
+                cell=cell_dec, return_all_states=True)
+
+            self.y_logits = dec_outputs
+            self.beam_symbols = beam_symbols
+            self.beam_path = beam_path
+            self.log_beam_probs = log_beam_probs
+
+            # get the real last state
+            y_states = tf.pack(y_states, axis=1)
+            y_last_state = last_relevant(y_states, self.y_len-1, self.cell_size, self.max_utt_size-1)
+
+        with tf.variable_scope("encoder", reuse=True):
+            x_input_embedding = x_embedding[:, 0:-1, :]
+            self.z_logits, _ = rnn.dynamic_rnn(cell_enc, x_input_embedding, sequence_length=self.x_len-1,
+                                               initial_state=y_last_state, dtype=tf.float32)
+
+        with tf.variable_scope("loss_calculation"):
+            # There are two loss. The decoder loss and reconstruction loss
+            y_logits = tf.pack(self.y_logits, 1)
+            y_labels = tf.slice(self.y_batch, [0, 1], [-1, -1])
+            y_weights = tf.to_float(tf.sign(y_labels))
+
+            z_labels = tf.slice(self.x_batch, [0, 1], [-1, -1])
+            z_weights = tf.to_float(tf.sign(z_labels))
+
+            y_loss = nn_ops.sparse_softmax_cross_entropy_with_logits(y_logits, y_labels)
+            z_loss = nn_ops.sparse_softmax_cross_entropy_with_logits(self.z_logits, z_labels)
+
+            # mask out invalid positions
+            y_loss *= y_weights
+            z_loss *= z_weights
+
+            # get final losses
+            y_loss_sum = tf.reduce_sum(y_loss)
+            z_loss_sum = tf.reduce_sum(z_loss)
+            batch_y_loss = y_loss_sum / float(self.batch_size)
+            batch_z_loss = z_loss_sum / float(self.batch_size)
+
+            self.y_loss_avg = y_loss_sum / tf.reduce_sum(y_weights)
+            self.z_loss_avg = z_loss_sum / tf.reduce_sum(z_weights)
+
+            combine_loss = batch_y_loss + batch_z_loss
+            self.saver = tf.train.Saver(tf.all_variables(), write_version=tf.train.SaverDef.V2)
+
+        if log_dir is not None:
+            # choose a optimizer
+            if config.op == "adam":
+                optim = tf.train.AdamOptimizer(self.learning_rate)
+            elif config.op == "rmsprop":
+                optim = tf.train.RMSPropOptimizer(self.learning_rate)
+            else:
+                optim = tf.train.GradientDescentOptimizer(self.learning_rate)
+
+            tvars = tf.trainable_variables()
+            grads, _ = tf.clip_by_global_norm(tf.gradients(combine_loss, tvars), config.grad_clip)
+            self.train_ops = optim.apply_gradients(zip(grads, tvars))
+
+            self.print_model_stats(tf.trainable_variables())
+            train_log_dir = os.path.join(log_dir, "train")
+            print("Save summary to %s" % log_dir)
+            self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
+
+    def train(self, global_t, sess, train_feed, update_limit=None):
+        y_losses = []
+        z_losses = []
+
+        local_t = 0
+        start_time = time.time()
+        while True:
+            if local_t >= update_limit:
+                break
+
+            batch = train_feed.next_batch()
+            if batch is None:
+                break
+
+            feed_dict, _, _ = self.batch_2_feed_dict(batch)
+            fetches = [self.train_ops, self.y_loss_avg, self.z_loss_avg]
+            _, y_loss, z_loss = sess.run(fetches, feed_dict)
+
+            y_losses.append(y_loss)
+            z_losses.append(z_loss)
+
+            global_t += 1
+            local_t += 1
+            if local_t % (train_feed.num_batch / 50) == 0:
+                train_dec_loss = np.mean(y_losses)
+                train_reconstruct_loss = np.mean(z_losses)
+                print("%.2f train Y loss %f perleixty %f :: train Z loss %f perleixty %f" %
+                      (train_feed.ptr / float(train_feed.num_batch), float(train_dec_loss), np.exp(train_dec_loss),
+                       float(train_reconstruct_loss), np.exp(train_reconstruct_loss)))
+        end_time = time.time()
+
+        train_dec_loss = np.mean(y_losses)
+        train_reconstruct_loss = np.mean(z_losses)
+
+        print("Train Y loss %f perleixty %f :: train Z loss %f perleixty %f with time %f"
+              % ( float(train_dec_loss), np.exp(train_dec_loss), float(train_reconstruct_loss),
+                  np.exp(train_reconstruct_loss), (end_time-start_time)/float(local_t)))
+
+        return global_t, train_dec_loss
+
+    def valid(self, name, sess, valid_feed):
+        """
+        No training is involved. Just forward path and compute the metrics
+        :param name: the name, ususally TEST or VALID
+        :param sess: the tf session
+        :param valid_feed: the data feed
+        :return: average loss
+        """
+        y_losses = []
+        z_losses = []
+
+        while True:
+            batch = valid_feed.next_batch()
+            if batch is None:
+                break
+            feed_dict, _, _ = self.batch_2_feed_dict(batch)
+            fetches = [self.y_loss_avg, self.z_loss_avg]
+            decoder_loss, reconstruct_loss = sess.run(fetches, feed_dict)
+            y_losses.append(decoder_loss)
+            z_losses.append(reconstruct_loss)
+
+        # print final stats
+        valid_dec_loss = np.mean(y_losses)
+        valid_reconstruct_loss = np.mean(z_losses)
+
+        print("%s Y loss %f perleixty %f :: valid Z loss %f perleixty %f"
+              % (name, float(valid_dec_loss), np.exp(valid_dec_loss),
+                 float(valid_reconstruct_loss), np.exp(valid_reconstruct_loss)))
+        return valid_dec_loss
+
+    def batch_2_feed_dict(self, batch):
+        batch_c_len, batch_x_len, batch_y_len, batch_z_len, c_batch, x_batch, y_batch, z_batch = batch
+        feed_dict = {self.c_batch: c_batch, self.x_batch: x_batch, self.y_batch: y_batch,
+                     self.c_len: batch_c_len, self.x_len: batch_x_len, self.y_len: batch_y_len,}
+        return feed_dict, x_batch, y_batch
 
 class Future2Seq(BaseWord2Seq):
 
