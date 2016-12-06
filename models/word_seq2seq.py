@@ -967,8 +967,7 @@ class Future2Seq(BaseWord2Seq):
 
             # get the real last state
             y_states = tf.pack(y_states, axis=1)
-            y_last_state = tf.reduce_sum(tf.mul(y_states, tf.expand_dims(tf.one_hot(self.y_len-2, max_y_minus_one), -1)), 1)
-            y_last_state = tf.reshape(y_last_state, [-1, self.cell_size])
+            y_last_state = last_relevant(y_states, self.y_len-1, self.cell_size, self.max_utt_size-1)
 
         with tf.variable_scope("encoder", reuse=True):
             z_input_embedding = z_embedding[:, 0:-1, :]

@@ -84,6 +84,15 @@ def extract_argmax_and_embed(embedding, max_symbols, output_projection=None, upd
     return loop_function
 
 
+def last_relevant(output, length, out_size, max_length):
+    batch_size = tf.shape(output)[0]
+    index = tf.range(0, batch_size) * max_length + (length - 1)
+    flat = tf.reshape(output, [-1, out_size])
+    relevant = tf.gather(flat, index)
+    relevant = tf.reshape(relevant, [batch_size, out_size])
+    return relevant
+
+
 def gumbel_sample_and_embed(embedding, gumble_symbols, max_gumbel_noise=1.0):
 
     def loop_function(prev, i):
