@@ -156,8 +156,8 @@ def main():
 
                     for score, n in best:
                         f.write("Hyp>> %s " % " ".join([train_feed.rev_vocab[word] for word in n]))
-                    f.write("\n")
-                    print("***")
+                    f.write("\n***\n")
+
 
             # do sampling to see what kind of sentences is generated
             train_feed.epoch_init(test_config.batch_size, shuffle=True)
