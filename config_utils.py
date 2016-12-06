@@ -116,7 +116,7 @@ class HybridSeqConfig(object):
 class FutureSeqConfig(object):
     op = "adam"
     cell_type = "gru"
-    loop_function = "gumble"
+    loop_function = "max"
 
     # general config
     grad_clip = 10.0

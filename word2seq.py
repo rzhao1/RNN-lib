@@ -145,16 +145,19 @@ def main():
             print("Best valid loss %f and perpleixyt %f" % (best_valid_loss, np.exp(best_valid_loss)))
             print("Done training")
         else:
-
-
+            
             # dump everything to a file
             test_feed.epoch_init(14, shuffle=False)
-            all_n_best = test_model.test("TEST", sess, test_feed, num_batch=None)
-            with open(os.path.join(log_dir, "%s_%s_test.txt"% (model.__class__.__name__, config.loop_function)), "wb") as f:
-                for best in all_n_best:
+            all_srcs, all_refs, all_n_best = test_model.test("TEST", sess, test_feed, num_batch=None)
+            with open(os.path.join(log_dir, "%s_%s_test.txt" % (model.__class__.__name__, config.loop_function)),
+                      "wb") as f:
+                for src, ref, best in zip(all_srcs, all_refs, all_n_best):
+                    f.write("Source>> %s\n" % (" ".join([train_feed.rev_vocab[word] for word in src])))
+                    f.write("Ref>> %s\n" % (" ".join([train_feed.rev_vocab[word] for word in ref])))
+
                     for score, n in best:
-                        f.write(" ".join([train_feed.rev_vocab[word] for word in n]) + " ")
-                    f.write("\n")
+                        f.write("Hyp>> %s " % " ".join([train_feed.rev_vocab[word] for word in n]))
+                    f.write("\n***\n")
 
             # do sampling to see what kind of sentences is generated
             test_feed.epoch_init(test_config.batch_size, shuffle=True)
