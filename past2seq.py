@@ -78,7 +78,7 @@ def main():
         patience = 10  # wait for at least 10 epoch before consider early stop
         valid_loss_threshold = np.inf
         best_valid_loss = np.inf
-        checkpoint_path = os.path.join(ckp_dir, "word2seq.ckpt")
+        checkpoint_path = os.path.join(ckp_dir, model.__class__.__name__ + ".ckpt")
 
         if not os.path.exists(ckp_dir):
             os.mkdir(ckp_dir)
@@ -154,8 +154,7 @@ def main():
 
                     for score, n in best:
                         f.write("Hyp>> %s " % " ".join([train_feed.rev_vocab[word] for word in n]))
-                    f.write("\n")
-                    print("***")
+                    f.write("\n***\n")
 
             # do sampling to see what kind of sentences is generated
             test_feed.epoch_init(test_config.batch_size, shuffle=True)
