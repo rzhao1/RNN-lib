@@ -10,7 +10,7 @@ from config_utils import Utt2SeqConfig
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data", "the dir that has the raw corpus file")
-tf.app.flags.DEFINE_string("data_file", "combine_result_orson.txt", "the file that contains the raw data")
+tf.app.flags.DEFINE_string("data_file", "clean_data_ran.txt", "the file that contains the raw data")
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")

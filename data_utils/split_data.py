@@ -9,7 +9,6 @@ class WordSeqCorpus(object):
     train_y = None
     valid_x = None
     valid_y = None
-    test_x = None
     test_y = None
 
     def __init__(self, data_dir, data_name, split_size, max_vocab_size, max_enc_len, max_dec_len, line_thres):
@@ -257,6 +256,7 @@ class UttCorpus(object):
 
         current_movie = []
         current_name = []
+
         for line in lines:
             if "FILE_NAME" in line:
                 if current_movie:
@@ -365,13 +365,14 @@ class UttSeqCorpus(object):
         if utt_features is None:
             with open(os.path.join(data_dir, data_name), "rb") as f:
                 utt_features = self._parse_file(f.readlines())
+                self._create_corpus(utt_features, split_size)
 
-        self._create_corpus(utt_features, split_size)
+
 
         # clip train_y. Different word2seq, encoder don't need clipping, since it fixed history
-        self.train_y = self.clip_to_max_len(self.train_y)
-        self.valid_y = self.clip_to_max_len(self.valid_y)
-        self.test_y = self.clip_to_max_len(self.test_y)
+#        self.train_y = self.clip_to_max_len(self.train_y)
+#        self.valid_y = self.clip_to_max_len(self.valid_y)
+#        self.test_y = self.clip_to_max_len(self.test_y)
 
         # get vocabulary\
         self.vocab = self.get_vocab()
@@ -383,17 +384,13 @@ class UttSeqCorpus(object):
     def get_vocab(self):
         # get vocabulary dictionary
         vocab_cnt = {}
-        for spk, line in self.train_y:
-            for tkn in line:
+        for line in self.train_x:
+            for tkn in line[self.TEXT_ID]:
                 cnt = vocab_cnt.get(tkn, 0)
                 vocab_cnt[tkn] = cnt + 1
         vocab_cnt = [(cnt, key) for key, cnt in vocab_cnt.items()]
         vocab_cnt = sorted(vocab_cnt, reverse=True)
         vocab = [key for cnt, key in vocab_cnt]
-        cnts = [cnt for cnt, key in vocab_cnt]
-        total = float(np.sum(cnts))
-        valid = float(np.sum(cnts[0:self.max_vocab_size]))
-        print("Before cutting. Raw vocab size is %d with valid ratio %f" % (len(vocab), valid / total))
         return vocab[0:self.max_vocab_size]
 
     def clip_to_max_len(self, dec_data):
@@ -404,7 +401,7 @@ class UttSeqCorpus(object):
         enc_lens = [len(x) for x in enc_data]
         avg_len = float(np.mean(enc_lens))
         max_len = float(np.max(enc_lens))
-        dec_lens = [len(x) for spk, x in dec_data]
+        dec_lens = [len(x) for x in dec_data]
         dec_avg_len = float(np.mean(dec_lens))
         dec_max_len = float(np.max(dec_lens))
         print ('%s encoder avg len %.2f max len %.2f of %d lines' % (name, avg_len, max_len, len(enc_data)))
@@ -444,7 +441,7 @@ class UttSeqCorpus(object):
                 feature[self.TEXT_ID] = [tkn.lower() for tkn in self.tokenizer(feature[self.TEXT_ID])]
 
         # dump the file
-        self.dump_data(utt_features)
+        self.dump_data(self.cache_name,utt_features)
 
         return utt_features
 
@@ -464,11 +461,15 @@ class UttSeqCorpus(object):
             if features == "$$$":
                 cur_movie_start_idx = idx
                 continue
-            content_x = utt_features[max(cur_movie_start_idx+1, idx - self.max_enc_utt_len):idx]
+            #content_x = utt_features[max(cur_movie_start_idx+1, idx ):idx]
+            content_x=[]
+            for item_id,item in enumerate (utt_features[max(cur_movie_start_idx+1,idx-self.line_threshold):idx]):
+                content_x.append[item[self.TEXT_ID]]
             if len(content_x) <= 0:
                 continue
             content_xs.append(content_x)
-            content_ys.append((features[self.SPK_ID], features[self.TEXT_ID]))
+            content_ys.append(utt_features[idx])
+            #content_ys.append((features[self.SPK_ID], features[self.TEXT_ID]))
 
         # split the data
         self.train_x = content_xs[0: train_size]
@@ -478,6 +479,15 @@ class UttSeqCorpus(object):
         self.test_x = content_xs[train_size + valid_size:]
         self.test_y = content_ys[train_size + valid_size:]
 
+
+        # begin dumpping data to file
+        self.dump_data("train_x.txt", self.train_x)
+        self.dump_data("train_y.txt", self.train_y)
+        self.dump_data("valid_x.txt", self.valid_x)
+        self.dump_data("valid_y.txt", self.valid_y)
+        self.dump_data("test_x.txt", self.test_x)
+        self.dump_data("test_y.txt", self.test_y)
+
     def get_corpus(self):
         """
         :return: the corpus in train/valid/test
@@ -486,11 +496,14 @@ class UttSeqCorpus(object):
                 "valid": (self.valid_x, self.valid_y),
                 "test": (self.test_x, self.test_y)}
 
-    def dump_data(self, utt_features):
-        if os.path.exists(os.path.join(self._cache_dir, self.cache_name)):
+
+
+
+    def dump_data(self, filename,utt_features):
+        if os.path.exists(os.path.join(self._cache_dir, filename)):
             raise ValueError("File already exists. Abort dumping")
-        print("Dumping to %s with %d lines" % (self.cache_name, len(utt_features)))
-        with open(os.path.join(self._cache_dir, self.cache_name), "wb") as f:
+        print("Dumping to %s with %d lines" % (filename, len(utt_features)))
+        with open(os.path.join(self._cache_dir, filename), "wb") as f:
             for line in utt_features:
                 f.write(json.dumps(line) + "\n")
 
@@ -498,7 +511,20 @@ class UttSeqCorpus(object):
         if not os.path.exists(os.path.join(self._cache_dir, self.cache_name)):
             return None
 
-        with open(os.path.join(self._cache_dir, self.cache_name), "rb") as f:
-            lines = f.readlines()
-            lines = [json.loads(l.strip()) for l in lines]
-        return lines
+
+        def load_file(file_name):
+            print("Start with loading "+file_name)
+            with open(os.path.join(self._cache_dir, self.cache_name), "rb") as f:
+                lines = f.readlines()
+                lines = [json.loads(l.strip()) for l in lines]
+                print("Done with loading "+file_name)
+                return lines
+
+        print("Loaded from cache")
+        self.train_x = load_file("train_x.txt")
+        self.train_y = load_file("train_y.txt")
+        self.valid_x = load_file("valid_x.txt")
+        self.valid_y = load_file("valid_y.txt")
+        self.test_x = load_file("test_x.txt")
+        self.test_y = load_file("test_y.txt")
+        return True

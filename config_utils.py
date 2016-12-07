@@ -42,6 +42,7 @@ class Word2SeqConfig(object):
     line_thres =2
     max_dec_len = 30
     max_enc_len = 30
+    handcraft_feature_size=3
 
     # SGD training related
     init_lr = 0.6

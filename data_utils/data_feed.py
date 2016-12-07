@@ -111,9 +111,12 @@ class UttDataFeed(object):
     batch_size = 0
     num_batch = None
     batch_indexes = None
+
     PAD_ID = 0
     UNK_ID = 1
-    vocab_offset = len([PAD_ID, UNK_ID])
+    GO_ID = 2
+    EOS_ID = 3
+
 
     # feature names
     SPK_ID = 0
@@ -133,23 +136,28 @@ class UttDataFeed(object):
     feature_size = [2, None, len(dialog_acts), 3, None, None, None]
 
 
-    def __init__(self, name, data, vocab):
+    def __init__(self, name,config, data, vocab):
         self.name = name
         # plus 4 is because of the 2 built-in words PAD, UNK
-        self.vocab = {word: idx + self.vocab_offset for idx, word in enumerate(vocab)}
+        self.vocab = {word: idx + 4 for idx, word in enumerate(vocab)}
         self.vocab["PAD"] = self.PAD_ID
         self.vocab["UNK"] = self.UNK_ID
+        self.vocab["GO_"] = self.GO_ID
+        self.vocab["EOS_"] = self.EOS_ID
+        self.max_encoder_size = config.max_enc_len
+
 
         # convert data into ids
         self.id_text = []
         self.labels = []
-        for idx, line in enumerate(data):
+        train_x,train_y=data
+        for idx, line in enumerate(train_x):
             if line == "$$$":
                 continue
             self.id_text.append(self.line_2_ids(line))
-            self.labels.append(self.line_2_label(None if idx == 0 else data[idx-1],
+            self.labels.append(self.line_2_label(None if idx == 0 else train_y[idx-1],
                                                  line,
-                                                 None if idx < len(data) else data[idx+1]))
+                                                 None if idx < len(train_y) else train_y[idx+1]))
 
         # sort the lines in terms of length for computation efficiency
         self.indexes = list(np.argsort([len(line) for line in self.id_text]))
@@ -157,13 +165,15 @@ class UttDataFeed(object):
         print("%s feed loads %d samples" % (name, self.data_size))
 
     def line_2_ids(self, line):
-        return [self.vocab.get(word, self.UNK_ID) for word in line[self.TEXT_ID].split()]
+
+        return [self.vocab.get(word, self.UNK_ID) for word in line[self.TEXT_ID]]
 
     def line_2_label(self, prev_line, line, next_line):
         # current line
         features = dict()
         features[self.DA_ID] = self.dialog_acts.index(line[self.DA_ID])
         features[self.SENTI_ID] = map(float, line[self.SENTI_ID].split())[0:3]
+        features[self.TEXT_ID] = [self.vocab.get(word, self.UNK_ID) for word in line[self.TEXT_ID]]
         return features
 
     def _shuffle(self):
@@ -178,15 +188,30 @@ class UttDataFeed(object):
         encoder_x = np.zeros((self.batch_size, max_enc_len), dtype=np.int32)
         label_y = dict()
         # add dialog act
-        label_y[self.DA_ID] = np.zeros(self.batch_size, dtype=np.int32)
+        label_y[self.DA_ID] = np.zeros(self.batch_size, dtype=np.float32)
         label_y[self.SENTI_ID] = np.zeros((self.batch_size, self.feature_size[self.SENTI_ID]), dtype=np.float32)
+        label_y[self.TEXT_ID] = np.zeros((self.batch_size, self.max_encoder_size), dtype=np.int32)
+        decoder_hcf=np.zeros((self.batch_size, self.feature_size[self.SENTI_ID]), dtype=np.float32)
+
 
         for idx, (x, y) in enumerate(zip(x_rows, y_rows)):
-            encoder_x[idx, 0:encoder_len[idx]] = x
+            #clip to the max encoder size
+
+            #clip to max size
+
+            temp_x = x[0:self.max_encoder_size]
+            encoder_x[idx, 0:len(temp_x)] = temp_x
             label_y[self.DA_ID][idx] = y[self.DA_ID]
             label_y[self.SENTI_ID][idx] = y[self.SENTI_ID]
+            temp_y=y[self.TEXT_ID][0:self.max_encoder_size-2]
 
-        return encoder_x, encoder_len, label_y
+            label_y[self.TEXT_ID][idx, 0:len(temp_y)+2] = [self.GO_ID]+temp_y+[self.EOS_ID]
+            decoder_hcf[idx]=label_y[self.SENTI_ID][idx]
+
+        return encoder_x, encoder_len, label_y[self.TEXT_ID],decoder_hcf
+
+
+
 
     def epoch_init(self, batch_size, shuffle=True):
         # create batch indexes for computation efficiency
@@ -267,6 +292,7 @@ class UttSeqDataFeed(object):
         self.indexes = list(np.argsort(all_lens))
         self.data_size = len(self.feat_xs)
         self.feat_size = len(self.vocab) + 1
+
         print("%s feed loads %d samples with max decoder size %d" % (name, self.data_size, self.max_dec_size))
 
     def line_2_ids_and_vec(self, x_line, y_line):
@@ -308,6 +334,7 @@ class UttSeqDataFeed(object):
 
         encoder_x = np.zeros((self.batch_size, max_enc_len, self.feat_size), dtype=np.float32)
         decoder_y = np.zeros((self.batch_size, max_dec_len), dtype=np.int32)
+
 
         for idx, (x, y) in enumerate(zip(x_rows, y_rows)):
             for t_id, (utt, floor) in enumerate(x):

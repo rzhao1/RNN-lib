@@ -1,16 +1,20 @@
 import os
 import time
+import sys
 from beeprint import pp
 import numpy as np
 import tensorflow as tf
+from data_utils.split_data import UttSeqCorpus
 from data_utils.split_data import WordSeqCorpus
 from data_utils.data_feed import WordSeqDataFeed
+from data_utils.data_feed import UttSeqDataFeed
+from data_utils.data_feed import UttDataFeed
 from models.word_seq2seq import Word2Seq
 from config_utils import Word2SeqConfig
 
 # constants
 tf.app.flags.DEFINE_string("data_dir", "Data/", "the dir that has the raw corpus file")
-tf.app.flags.DEFINE_string("data_file", "clean_data_ran.txt", "the file that contains the raw data")
+tf.app.flags.DEFINE_string("data_file", "combine_feature.txt", "the file that contains the raw data")
 tf.app.flags.DEFINE_string("work_dir", "seq_working/", "Experiment results directory.")
 tf.app.flags.DEFINE_string("equal_batch", True, "Make each batch has similar length.")
 tf.app.flags.DEFINE_string("max_vocab_size", 30000, "The top N vocabulary we use.")
@@ -36,14 +40,22 @@ def main():
     pp(config)
 
     # load corpus
-    api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [98,1,1], FLAGS.max_vocab_size,
-                        config.max_enc_len, config.max_dec_len, config.line_thres)
+    #api = WordSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [98,1,1], FLAGS.max_vocab_size,
+    #                    config.max_enc_len, config.max_dec_len, config.line_thres)
+
+    api = UttSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [98,1,1], FLAGS.max_vocab_size,
+                        config.max_enc_len, config.max_dec_len)
+
     corpus_data = api.get_corpus()
 
     # convert to numeric input outputs that fits into TF models
-    train_feed = WordSeqDataFeed("Train", config,corpus_data["train"], api.vocab)
-    valid_feed = WordSeqDataFeed("Valid", config,corpus_data["valid"], api.vocab)
-    test_feed = WordSeqDataFeed("Test", config,corpus_data["test"], api.vocab)
+  #  train_feed = UttSeqDataFeed("Train", config,corpus_data["train"], api.vocab)
+  #  valid_feed = UttSeqDataFeed("Valid", config,corpus_data["valid"], api.vocab)
+  #  test_feed = UttSeqDataFeed("Test", config,corpus_data["test"], api.vocab)
+
+    train_feed = UttDataFeed("Train", config,corpus_data["train"], api.vocab)
+    valid_feed = UttDataFeed("Valid", valid_config,corpus_data["valid"], api.vocab)
+    test_feed = UttDataFeed("Test",  test_config,corpus_data["test"], api.vocab)
 
     if not os.path.exists(FLAGS.work_dir):
         os.mkdir(FLAGS.work_dir)

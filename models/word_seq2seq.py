@@ -16,6 +16,7 @@ class Word2Seq(object):
     def __init__(self, sess, config, vocab_size, eos_id, log_dir=None, forward=False):
         self.batch_size = config.batch_size
         self.cell_size = cell_size = config.cell_size
+        self.handcraft_feature_size=config.handcraft_feature_size
         self.vocab_size = vocab_size
         self.max_decoder_size = config.max_dec_len
         self.forward = forward
@@ -24,12 +25,15 @@ class Word2Seq(object):
         self.is_lstm_cell = config.cell_type == "lstm"
         self.eos_id = eos_id
 
+
+
+
         self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="encoder_seq")
         # max_decoder_size including GO and EOS
-        self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, config.max_decoder_size), name="decoder_seq")
+        self.decoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, config.max_dec_len), name="decoder_seq")
         self.encoder_lens  = tf.placeholder(dtype=tf.int32, shape=(None), name="encoder_lens")
-
-        # include GO sent and EOS
+        self.decoder_hcf_batch = tf.placeholder(dtype=tf.float32,shape=(None,config.handcraft_feature_size),name="decoder_hcf")
+        # include GO sent and EOSs
         self.learning_rate = tf.Variable(float(config.init_lr), trainable=False)
         self.learning_rate_decay_op = self.learning_rate.assign(tf.mul(self.learning_rate, config.lr_decay))
 
@@ -38,41 +42,71 @@ class Word2Seq(object):
         # the decoder is in format GO sent EOS. Mostly we either work with GO sent or sent EOS. that is max_decoder-1
         max_decode_minus_one = self.max_decoder_size - 1
 
+        with tf.variable_scope('handcrafted_feature'):
+            decoder_hf=tf.get_variable("decoder_hf",[cell_size,self.handcraft_feature_size],dtype=tf.float32)
+            decoder_bf=tf.get_variable("decoder_bf",[self.handcraft_feature_size],dtype=tf.float32)
+
+
         with variable_scope.variable_scope("word_embedding"):
-            embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=tf.float32)
+            embedding = tf.get_variable("encoder_embedding", [vocab_size, config.embed_size], dtype=tf.float32)
 
             encoder_embedding = embedding_ops.embedding_lookup(embedding, tf.squeeze(tf.reshape(self.encoder_batch, [-1, 1]),
                                                                           squeeze_dims=[1]))
             encoder_embedding = tf.reshape(encoder_embedding, [-1, max_encode_sent_len, config.embed_size])
 
+            decoder_embedding = embedding_ops.embedding_lookup(embedding,
+                                                               tf.squeeze(tf.reshape(self.decoder_batch, [-1, 1]),
+                                                                          squeeze_dims=[1]))
+            decoder_embedding = tf.reshape(decoder_embedding, [-1, self.max_decoder_size, config.embed_size])
+
+
         with tf.variable_scope('seq2seq'):
             with tf.variable_scope('enc'):
                 if config.cell_type == "gru":
                     cell_enc = tf.nn.rnn_cell.GRUCell(cell_size)
+                    cell_enc_s =tf.nn.rnn_cell.GRUCell(cell_size)
                 elif config.cell_type == "lstm":
                     cell_enc = tf.nn.rnn_cell.LSTMCell(cell_size, state_is_tuple=True)
+                    cell_enc_s = tf.nn.rnn_cell.LSTMCell(cell_size, state_is_tuple=True)
                 else:
                     print("WARNING: unknown cell type. Use Basic RNN as default")
                     cell_enc = tf.nn.rnn_cell.BasicRNNCell(cell_size)
+                    cell_enc_s = tf.nn.rnn_cell.BasicRNNCell(cell_size)
 
                 if config.keep_prob < 1.0:
                     cell_enc = rnn_cell.DropoutWrapper(cell_enc, output_keep_prob=config.keep_prob,
                                                        input_keep_prob=config.keep_prob)
+                    cell_enc_s = rnn_cell.DropoutWrapper(cell_enc_s, output_keep_prob=config.keep_prob,
+                                                       input_keep_prob=config.keep_prob)
 
                 if config.num_layer > 1:
                     cell_enc = rnn_cell.MultiRNNCell([cell_enc] * config.num_layer, state_is_tuple=True)
+                    cell_enc_s = rnn_cell.MultiRNNCell([cell_enc_s] * config.num_layer, state_is_tuple=True)
 
-                encoder_outputs, encoder_last_state = rnn.dynamic_rnn(cell_enc, encoder_embedding,
-                                                                      sequence_length=self.encoder_lens,
-                                                        dtype=tf.float32)
+                with tf.variable_scope("enc_t"):
+                    encoder_outputs, encoder_last_state = rnn.dynamic_rnn(cell_enc, decoder_embedding,
+                                                                          sequence_length=self.encoder_lens,
+                                                            dtype=tf.float32)
+                with tf.variable_scope("enc_s"):
+                    encoder_outputs_s, encoder_last_state_s = rnn.dynamic_rnn(cell_enc_s, encoder_embedding,
+                                                                          sequence_length=self.encoder_lens,
+                                                                          dtype=tf.float32)
+
                 if config.num_layer > 1:
                     encoder_last_state = encoder_last_state[-1]
+                    encoder_last_state_s = encoder_last_state_s[-1]
 
             # post process the decoder embedding inputs and encoder_last_state
             # Tony decoder embedding we need to remove the last column
             decoder_embedding, encoder_last_state = self.prepare_for_beam(embedding, encoder_last_state,
                                                                           self.decoder_batch[:,
                                                                           0:max_decode_minus_one])
+            # Add sigmoid layer for predicting hand-crafted feature(hcf)
+            hcf_logits=tf.add(tf.matmul(encoder_last_state, decoder_hf),decoder_bf)
+            self.hcf_loss=tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(hcf_logits, self.decoder_hcf_batch, name=None))
+
+            #Add a cross entropy layer to calculate the difference between source encoding last hidden state and target encoding last hidden state
+            self.state_loss=tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(encoder_last_state, encoder_last_state_s, name=None))
 
             with tf.variable_scope('dec'):
 
@@ -108,7 +142,9 @@ class Word2Seq(object):
                 self.losses = nn_ops.sparse_softmax_cross_entropy_with_logits(logits_flat, labels_flat)
                 self.losses *= weights
                 self.loss_sum = tf.reduce_sum(self.losses)
-                self.real_loss = self.loss_sum / tf.reduce_sum(weights)
+
+                #Add handcraft feature error
+                self.real_loss = self.loss_sum / tf.reduce_sum(weights) + self.hcf_loss+self.state_loss
                 tf.scalar_summary('cross_entropy_loss', self.real_loss)
                 self.merged = tf.merge_all_summaries()
 
@@ -194,6 +230,8 @@ class Word2Seq(object):
 
     def train(self, global_t, sess, train_feed):
         losses = []
+        hcf_losses = []
+        state_losses =[]
         local_t = 0
         total_word_num = 0
         start_time = time.time()
@@ -201,25 +239,34 @@ class Word2Seq(object):
             batch = train_feed.next_batch()
             if batch is None:
                 break
-            encoder_len, decoder_len, encoder_x, decoder_y = batch
 
-            fetches = [self.train_ops, self.loss_sum, self.merged]
-            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
-            _, loss, summary = sess.run(fetches, feed_dict)
+           # encoder_x, encoder_len, decoder_y = batch
+
+            encoder_x, encoder_len, decoder_y, decoder_hcf = batch
+
+            fetches = [self.train_ops, self.loss_sum, self.hcf_loss,self.state_loss,self.merged]
+            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len,self.decoder_hcf_batch:decoder_hcf}
+            _, loss, hcf_loss,state_loss,summary = sess.run(fetches, feed_dict)
             self.train_summary_writer.add_summary(summary, global_t)
+            hcf_losses.append(hcf_loss)
+            state_losses.append(state_loss)
             losses.append(loss)
             global_t += 1
             local_t += 1
-            total_word_num += np.sum(decoder_len-np.array(1))  # since we remove GO for prediction
+            total_word_num += np.sum(encoder_len-np.array(1))  # since we remove GO for prediction
             if local_t % (train_feed.num_batch / 50) == 0:
                 train_loss = np.sum(losses) / total_word_num
-                print("%.2f train loss %f perleixty %f" %
-                      (local_t / float(train_feed.num_batch), float(train_loss), np.exp(train_loss)))
+                train_hcf_loss= np.sum(hcf_losses)
+                train_state_loss = np.sum(state_loss)
+                print("%.2f train loss %f perleixty %f, hcf loss %f, state loss %f" %
+                      (local_t / float(train_feed.num_batch), float(train_loss), np.exp(train_loss),train_hcf_loss,train_state_loss))
         end_time = time.time()
 
         train_loss = np.sum(losses) / total_word_num
-        print("Train loss %f perleixty %f with step %f"
-              % (float(train_loss), np.exp(train_loss), (end_time-start_time)/float(local_t)))
+        train_hcf_loss=np.mean(hcf_losses)
+        train_state_loss=np.sum(state_loss)
+        print("Train loss %f perleixty %f with step %f, hcf loss %f,state loss %f "
+              % (float(train_loss), np.exp(train_loss), (end_time-start_time)/float(local_t),train_hcf_loss,train_state_loss))
 
         return global_t, train_loss
 
