@@ -68,6 +68,8 @@ class WordSeqCorpus(object):
         print("Before cutting. Raw vocab size is %d with valid ratio %f" % (len(vocab), valid/total))
         return vocab[0:self.max_vocab_size]
 
+
+
     def oov(self, name, data):
         oov_cnt = 0
         total_cnt = 0
@@ -342,7 +344,7 @@ class UttSeqCorpus(object):
 
     cache_name = "post_utt_features.txt"
 
-    def __init__(self, data_dir, data_name, split_size, max_vocab_size, max_enc_utt_len, max_dec_word_len):
+    def __init__(self, data_dir, data_name, split_size, max_vocab_size, max_enc_utt_len, max_dec_word_len,line_threshold):
         """"
         :param line_thres: how many line will be merged as encoding sentensce
         :param split_size: size of training:valid:test
@@ -360,6 +362,7 @@ class UttSeqCorpus(object):
         self.max_vocab_size = max_vocab_size
         self.max_enc_utt_len = max_enc_utt_len
         self.max_dec_word_len = max_dec_word_len
+        self.line_threshold=line_threshold
 
         utt_features = self.load_data()
         if utt_features is None:
@@ -375,11 +378,11 @@ class UttSeqCorpus(object):
 #        self.test_y = self.clip_to_max_len(self.test_y)
 
         # get vocabulary\
-        self.vocab = self.get_vocab()
+        self.vocab = self.load_vocab("vocab.txt")
 
-        self.print_stats("TRAIN", self.train_x, self.train_y)
-        self.print_stats("VALID", self.valid_x, self.valid_y)
-        self.print_stats("TEST", self.test_x, self.test_y)
+       # self.print_stats("TRAIN", self.train_x, self.train_y)
+       # self.print_stats("VALID", self.valid_x, self.valid_y)
+       # self.print_stats("TEST", self.test_x, self.test_y)
 
     def get_vocab(self):
         # get vocabulary dictionary
@@ -392,6 +395,15 @@ class UttSeqCorpus(object):
         vocab_cnt = sorted(vocab_cnt, reverse=True)
         vocab = [key for cnt, key in vocab_cnt]
         return vocab[0:self.max_vocab_size]
+
+    def load_vocab(self,filename):
+        # load vocabulary dictionary
+        with open(os.path.join(self._cache_dir, filename), "rb") as f:
+            lines = f.readlines()
+            vocab = [l.strip() for l in lines]
+
+        return vocab[0:self.max_vocab_size]
+
 
     def clip_to_max_len(self, dec_data):
         new_dec_data = [(spk, x[0:self.max_dec_word_len]) for spk, x in dec_data]
@@ -464,9 +476,11 @@ class UttSeqCorpus(object):
             #content_x = utt_features[max(cur_movie_start_idx+1, idx ):idx]
             content_x=[]
             for item_id,item in enumerate (utt_features[max(cur_movie_start_idx+1,idx-self.line_threshold):idx]):
-                content_x.append[item[self.TEXT_ID]]
+
+                content_x.extend(item[self.TEXT_ID])
             if len(content_x) <= 0:
                 continue
+
             content_xs.append(content_x)
             content_ys.append(utt_features[idx])
             #content_ys.append((features[self.SPK_ID], features[self.TEXT_ID]))
@@ -514,7 +528,7 @@ class UttSeqCorpus(object):
 
         def load_file(file_name):
             print("Start with loading "+file_name)
-            with open(os.path.join(self._cache_dir, self.cache_name), "rb") as f:
+            with open(os.path.join(self._cache_dir, file_name), "rb") as f:
                 lines = f.readlines()
                 lines = [json.loads(l.strip()) for l in lines]
                 print("Done with loading "+file_name)

@@ -24,8 +24,7 @@ class Word2Seq(object):
         self.word_embed_size = config.embed_size
         self.is_lstm_cell = config.cell_type == "lstm"
         self.eos_id = eos_id
-
-
+        self.loop_fuction = config.loop_function
 
 
         self.encoder_batch = tf.placeholder(dtype=tf.int32, shape=(None, None), name="encoder_seq")
@@ -103,7 +102,7 @@ class Word2Seq(object):
                                                                           0:max_decode_minus_one])
             # Add sigmoid layer for predicting hand-crafted feature(hcf)
             hcf_logits=tf.add(tf.matmul(encoder_last_state, decoder_hf),decoder_bf)
-            self.hcf_loss=tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(hcf_logits, self.decoder_hcf_batch, name=None))
+            self.hcf_loss=tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(hcf_logits, self.decoder_hcf_batch, name=None))
 
             #Add a cross entropy layer to calculate the difference between source encoding last hidden state and target encoding last hidden state
             self.state_loss=tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(encoder_last_state, encoder_last_state_s, name=None))
@@ -123,7 +122,14 @@ class Word2Seq(object):
 
                 # No back propagation and forward only for testing
                 # run decoder to get sequence outputs
-                dec_outputs, beam_symbols, beam_path, log_beam_probs = self.beam_rnn_decoder(
+                if (self.forward):
+                    dec_outputs, beam_symbols, beam_path, log_beam_probs = self.beam_rnn_decoder(
+                        decoder_embedding=decoder_embedding,
+                        initial_state=encoder_last_state_s,
+                        embedding=embedding,
+                        cell=cell_dec)
+                else:
+                    dec_outputs, beam_symbols, beam_path, log_beam_probs = self.beam_rnn_decoder(
                     decoder_embedding=decoder_embedding,
                     initial_state=encoder_last_state,
                     embedding=embedding,
@@ -195,10 +201,15 @@ class Word2Seq(object):
 
     def get_loop_function(self, embedding, num_symbol, beam_symbols, beam_path, log_beam_probs):
         if self.forward:
-            loop_function = beam_and_embed(embedding, self.beam_size,
-                                           num_symbol, beam_symbols,
-                                           beam_path, log_beam_probs,
-                                           self.eos_id)
+            if self.loop_fuction == "beam":
+                loop_function = beam_and_embed(embedding, self.beam_size,
+                                               num_symbol, beam_symbols,
+                                               beam_path, log_beam_probs,
+                                               self.eos_id)
+            elif self.loop_fuction == "gumble":
+                loop_function = gumbel_sample_and_embed(embedding, beam_symbols)
+            else:
+                loop_function = extract_argmax_and_embed(embedding, beam_symbols)
         else:
             loop_function = None
         return loop_function
@@ -208,7 +219,7 @@ class Word2Seq(object):
         Map the decoder inputs into embedding. If using beam search, also tile the inputs by beam_size times
         """
         _, seq_len = decoder_inputs.get_shape()
-        if self.forward:
+        if self.forward and self.loop_fuction == "beam":
             # for beam search, we need to duplicate the input (GO symbols) by beam_size times
             # the initial state is also tiled by beam_size times
             emb_inp = []
@@ -256,15 +267,15 @@ class Word2Seq(object):
             total_word_num += np.sum(encoder_len-np.array(1))  # since we remove GO for prediction
             if local_t % (train_feed.num_batch / 50) == 0:
                 train_loss = np.sum(losses) / total_word_num
-                train_hcf_loss= np.sum(hcf_losses)
-                train_state_loss = np.sum(state_loss)
+                train_hcf_loss= np.mean(hcf_losses)
+                train_state_loss = np.mean(state_losses)
                 print("%.2f train loss %f perleixty %f, hcf loss %f, state loss %f" %
                       (local_t / float(train_feed.num_batch), float(train_loss), np.exp(train_loss),train_hcf_loss,train_state_loss))
         end_time = time.time()
 
         train_loss = np.sum(losses) / total_word_num
         train_hcf_loss=np.mean(hcf_losses)
-        train_state_loss=np.sum(state_loss)
+        train_state_loss=np.mean(state_losses)
         print("Train loss %f perleixty %f with step %f, hcf loss %f,state loss %f "
               % (float(train_loss), np.exp(train_loss), (end_time-start_time)/float(local_t),train_hcf_loss,train_state_loss))
 
@@ -279,6 +290,8 @@ class Word2Seq(object):
         :return: average loss
         """
         losses = []
+        hcf_losses = []
+        state_losses = []
         total_word_num = 0
 
         while True:
@@ -286,60 +299,97 @@ class Word2Seq(object):
             if batch is None:
                 break
 
-            encoder_len, decoder_len, encoder_x, decoder_y = batch
-            fetches = [self.loss_sum]
-            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
-            loss = sess.run(fetches, feed_dict)
-            total_word_num += np.sum(decoder_len-np.array(1)) # since we remove GO for prediction
+            encoder_x, encoder_len, decoder_y, decoder_hcf = batch
+            fetches = [self.loss_sum, self.hcf_loss, self.state_loss]
+            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len,
+                     self.decoder_hcf_batch: decoder_hcf}
+            loss, hcf_loss, state_loss = sess.run(fetches, feed_dict)
+            hcf_losses.append(hcf_loss)
+            state_losses.append(state_loss)
             losses.append(loss)
+            total_word_num += np.sum(encoder_len - np.array(1))
 
         # print final stats
         valid_loss = float(np.sum(losses) / total_word_num)
-        print("%s loss %f and perplexity %f" % (name, valid_loss, np.exp(valid_loss)))
+        valid_hcf_loss = np.mean(hcf_losses)
+        valid_state_loss = np.mean(state_losses)
+        print("%s loss %f and perplexity %f, hcf loss %f, state loss %f" % (name, valid_loss, np.exp(valid_loss),valid_hcf_loss,valid_state_loss))
         return valid_loss
 
     def test(self, name, sess, test_feed, num_batch=None):
         all_refs = []
+        all_srcs = []
         all_n_bests = [] # 2D list. List of List of N-best
         local_t = 0
-        fetch = [self.logits, self.beam_symbols, self.beam_path, self.log_beam_probs]
+
+        if self.loop_fuction == "beam":
+            fetch = [self.beam_symbols, self.beam_path, self.log_beam_probs]
+        else:
+            fetch = [self.beam_symbols]
+
         while True:
             batch = test_feed.next_batch()
             if batch is None or (num_batch is not None and local_t > num_batch):
                 break
-            encoder_len, decoder_len, encoder_x, decoder_y = batch
-            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
-            pred, symbol, path, probs = sess.run(fetch, feed_dict)
+
+            encoder_x, encoder_len, decoder_y, decoder_hcf = batch
+            feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len,
+                         self.decoder_hcf_batch: decoder_hcf}
+
+            #  encoder_len, decoder_len, encoder_x, decoder_y = batch
+             # feed_dict = {self.encoder_batch: encoder_x, self.decoder_batch: decoder_y, self.encoder_lens: encoder_len}
+            outputs = sess.run(fetch, feed_dict)
             # [B*beam x vocab]*dec_len, [B*beam]*dec_len, [B*beam]*dec_len [B*beamx1]*dec_len
             # label: [B x max_dec_len+1]
+            if self.log_beam_probs == "beam":
+                symbol, path, probs = outputs
 
-            beam_symbols_matrix = np.array(symbol)
-            beam_path_matrix = np.array(path)
-            beam_log_matrix = np.array(probs)
+                beam_symbols_matrix = np.array(symbol)
+                beam_path_matrix = np.array(path)
+                beam_log_matrix = np.array(probs)
 
-            for b_idx in range(test_feed.batch_size):
-                ref = list(decoder_y[b_idx, 1:])
-                # remove padding and EOS symbol
-                ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
-                b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
-                # use lattic to find the N-best list
-                n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(decoder_y[b_idx, 1:])
+                    # remove padding and EOS symbol
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_path = beam_path_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    b_beam_log = beam_log_matrix[:, b_idx * self.beam_size:(b_idx + 1) * self.beam_size]
+                    # use lattic to find the N-best list
+                    n_best = get_n_best(b_beam_symbol, b_beam_path, b_beam_log, self.beam_size, test_feed.EOS_ID)
 
-                all_refs.append(ref)
-                all_n_bests.append(n_best)
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
+            else:
+                beam_symbols_matrix = np.array(outputs[0]).T
+                for b_idx in range(test_feed.batch_size):
+                    ref = list(decoder_y[b_idx, 1:])
+                    src = list(encoder_x[b_idx, :])
+                    # remove padding and EOS symbol
+                    src = [s for s in src if s != test_feed.PAD_ID]
+                    ref = [r for r in ref if r not in [test_feed.PAD_ID, test_feed.EOS_ID]]
+                    b_beam_symbol = beam_symbols_matrix[b_idx, :].tolist()
+                    # use lattic to find the N-best list
+                    if test_feed.EOS_ID in b_beam_symbol:
+                        n_best = [(1.0, b_beam_symbol[0:b_beam_symbol.index(test_feed.EOS_ID)])]
+                    else:
+                        n_best = [(1.0, b_beam_symbol)]
+                    all_srcs.append(src)
+                    all_refs.append(ref)
+                    all_n_bests.append(n_best)
 
             local_t += 1
 
         # get error
-        return self.beam_error(all_refs, all_n_bests, name, test_feed.rev_vocab)
+        return self.beam_error(all_srcs, all_refs, all_n_bests, name, test_feed.rev_vocab)
 
-    def beam_error(self, all_refs, all_n_best, name, rev_vocab):
+    def beam_error(self, all_srcs, all_refs, all_n_best, name, rev_vocab):
         all_bleu = []
-        for ref, n_best in zip(all_refs, all_n_best):
+        for src, ref, n_best in zip(all_srcs, all_refs, all_n_best):
+            src = [rev_vocab[word] for word in src]
             ref = [rev_vocab[word] for word in ref]
             local_bleu = []
+            print("Source>> %s" % " ".join(src))
             for score, best in n_best:
                 best = [rev_vocab[word] for word in best]
                 print("Label>> %s ||| Hyp>> %s" % (" ".join(ref), " ".join(best)))
@@ -347,7 +397,7 @@ class Word2Seq(object):
                     local_bleu.append(bleu.sentence_bleu([ref], best))
                 except ZeroDivisionError:
                     local_bleu.append(0.0)
-            print("*"*20)
+            print("*" * 20)
             all_bleu.append(local_bleu)
 
         # begin evaluation of @n

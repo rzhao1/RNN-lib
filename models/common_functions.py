@@ -55,7 +55,7 @@ def beam_and_embed(embedding, beam_size, num_symbols, beam_symbols, beam_path, l
     return beam_search
 
 
-def extract_argmax_and_embed(embedding, output_projection=None, update_embedding=False):
+def extract_argmax_and_embed(embedding, max_symbols, output_projection=None, update_embedding=False):
     """Get a loop_function that extracts the previous symbol and embeds it.
     Args:
       embedding: embedding tensor for symbols.
@@ -71,12 +71,41 @@ def extract_argmax_and_embed(embedding, output_projection=None, update_embedding
         if output_projection is not None:
             prev = nn_ops.xw_plus_b(
                 prev, output_projection[0], output_projection[1])
+
         prev_symbol = tf.argmax(prev, 1)
+        max_symbols.append(prev_symbol)
         # Note that gradients will not propagate through the second parameter of
         # embedding_lookup.
         emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
         if not update_embedding:
             emb_prev = array_ops.stop_gradient(emb_prev)
+        return emb_prev
+
+    return loop_function
+
+
+def last_relevant(output, length, out_size, max_length):
+    batch_size = tf.shape(output)[0]
+    index = tf.range(0, batch_size) * max_length + (length - 1)
+    flat = tf.reshape(output, [-1, out_size])
+    relevant = tf.gather(flat, index)
+    relevant = tf.reshape(relevant, [batch_size, out_size])
+    return relevant
+
+
+def gumbel_sample_and_embed(embedding, gumble_symbols, max_gumbel_noise=1.0):
+
+    def loop_function(prev, i):
+        matrix_U = -1.0 * tf.log(-1.0*tf.log(tf.random_uniform(tf.shape(prev), minval=0.0, maxval=max_gumbel_noise)))
+        if i <= 1:
+            prev_symbol = tf.argmax(tf.sub(prev, matrix_U)[:, 8:], dimension=1) + 8
+        else:
+            prev_symbol = tf.argmax(tf.sub(prev, matrix_U), dimension=1)
+
+        gumble_symbols.append(prev_symbol)
+        # Note that gradients will not propagate through the second parameter of
+        # embedding_lookup.
+        emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
         return emb_prev
 
     return loop_function

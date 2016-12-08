@@ -31,7 +31,7 @@ def main():
     # for perplexity evaluation
     valid_config = Word2SeqConfig()
     valid_config.keep_prob = 1.0
-    valid_config.batch_size = 200
+    valid_config.batch_size = 20
 
     # for forward only decoding
     test_config = Word2SeqConfig()
@@ -44,7 +44,7 @@ def main():
     #                    config.max_enc_len, config.max_dec_len, config.line_thres)
 
     api = UttSeqCorpus(FLAGS.data_dir, FLAGS.data_file, [98,1,1], FLAGS.max_vocab_size,
-                        config.max_enc_len, config.max_dec_len)
+                        config.max_enc_len, config.max_dec_len,config.line_thres)
 
     corpus_data = api.get_corpus()
 
@@ -69,6 +69,7 @@ def main():
     # begin training
     with tf.Session() as sess:
         initializer = tf.random_uniform_initializer(-1*config.init_w, config.init_w)
+
         with tf.variable_scope("model", reuse=None, initializer=initializer):
             model = Word2Seq(sess, config, len(train_feed.vocab), train_feed.EOS_ID,
                              log_dir=None if FLAGS.forward else log_dir, forward=False)
@@ -104,6 +105,7 @@ def main():
             for epoch in range(config.max_epoch):
                 print(">> Epoch %d with lr %f" % (epoch, model.learning_rate.eval()))
 
+
                 train_feed.epoch_init(config.batch_size, shuffle=True)
                 global_t, train_loss = model.train(global_t, sess, train_feed)
 
@@ -111,12 +113,12 @@ def main():
                 valid_feed.epoch_init(valid_config.batch_size, shuffle=False)
                 valid_loss = valid_model.valid("VALID", sess, valid_feed)
 
-                test_feed.epoch_init(valid_config.batch_size, shuffle=False)
-                valid_model.valid("TEST", sess, test_feed)
 
-                # do sampling to see what kind of sentences is generated
-                test_feed.epoch_init(test_config.batch_size, shuffle=True)
-                test_model.test("TEST", sess, test_feed, num_batch=2)
+
+                test_feed.epoch_init(valid_config.batch_size, shuffle=False)
+                test_model.test("TEST", sess, test_feed)
+
+
 
                 done_epoch = epoch +1
 

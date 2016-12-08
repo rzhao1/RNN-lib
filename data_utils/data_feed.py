@@ -145,18 +145,22 @@ class UttDataFeed(object):
         self.vocab["GO_"] = self.GO_ID
         self.vocab["EOS_"] = self.EOS_ID
         self.max_encoder_size = config.max_enc_len
-
+        self.rev_vocab={v:k for k,v in self.vocab.items()}
 
         # convert data into ids
         self.id_text = []
         self.labels = []
-        train_x,train_y=data
+        train_x, train_y=data
+
+
+
         for idx, line in enumerate(train_x):
             if line == "$$$":
                 continue
+
             self.id_text.append(self.line_2_ids(line))
             self.labels.append(self.line_2_label(None if idx == 0 else train_y[idx-1],
-                                                 line,
+                                                 train_y[idx],
                                                  None if idx < len(train_y) else train_y[idx+1]))
 
         # sort the lines in terms of length for computation efficiency
@@ -166,7 +170,7 @@ class UttDataFeed(object):
 
     def line_2_ids(self, line):
 
-        return [self.vocab.get(word, self.UNK_ID) for word in line[self.TEXT_ID]]
+        return [self.vocab.get(word, self.UNK_ID) for word in line]
 
     def line_2_label(self, prev_line, line, next_line):
         # current line

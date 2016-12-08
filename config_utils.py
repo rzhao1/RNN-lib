@@ -28,6 +28,7 @@ class Word2SeqConfig(object):
     op = "sgd"
     cell_type = "gru"
     use_attention = True
+    loop_function = "gumble"
 
     # general config
     grad_clip = 5.0
